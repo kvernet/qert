@@ -39,6 +39,8 @@ add_executable(qert
     src/common.hpp
     src/seed.hpp
     src/seed.cpp
+    src/statevector.hpp
+    src/statevector.cpp
     src/main.cpp
 )
 

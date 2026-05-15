@@ -1,12 +1,26 @@
 // src/main.cpp (temporary: test compilation + seed infrastructure)
 #include "common.hpp"
 #include "seed.hpp"
+#include "statevector.hpp"
 #include <build_info.hpp>
 
-#include <cstdio>
+#include <iostream>
+
+int random_seed();
+int state_vector();
 
 int main()
 {
+    if (random_seed() || state_vector()) {
+        return 1;
+    }
+
+    std::printf("All tests passed.\n");
+
+    return 0;
+}
+
+int random_seed() {
     // Test global seed
     qert::set_rng_seed(42);
     if (qert::get_rng_seed() != 42)
@@ -64,6 +78,59 @@ int main()
         return 1;
     }
 
-    std::printf("All tests passed.\n");
+    return 0;
+}
+
+int state_vector()
+{
+    // Test statevector construction
+    qert::Statevector sv(4);
+    if (sv.num_qubits() != 4)
+    {
+        std::fprintf(stderr, "FAIL: num_qubits\n");
+        return 1;
+    }
+    if (sv.size() != 16)
+    {
+        std::fprintf(stderr, "FAIL: size\n");
+        return 1;
+    }
+
+    // Test initial state |0000⟩
+    if (std::abs(sv.amplitude(0) - qert::Complex{1.0, 0.0}) > qert::NUMERICAL_EPSILON)
+    {
+        std::fprintf(stderr, "FAIL: initial state |0⟩\n");
+        return 1;
+    }
+    if (std::abs(sv.amplitude(1)) > qert::NUMERICAL_EPSILON)
+    {
+        std::fprintf(stderr, "FAIL: non-zero amplitude at index 1\n");
+        return 1;
+    }
+
+    // Test norm
+    if (std::abs(sv.norm() - 1.0) > qert::NUMERICAL_EPSILON)
+    {
+        std::fprintf(stderr, "FAIL: norm\n");
+        return 1;
+    }
+
+    // Test reset
+    sv.amplitude(3) = qert::Complex{0.5, 0.0};
+    sv.reset_to_zero();
+    if (std::abs(sv.amplitude(3)) > qert::NUMERICAL_EPSILON)
+    {
+        std::fprintf(stderr, "FAIL: reset_to_zero\n");
+        return 1;
+    }
+
+    // Test move semantics compile
+    qert::Statevector sv2(std::move(sv));
+    if (sv2.num_qubits() != 4)
+    {
+        std::fprintf(stderr, "FAIL: move construction\n");
+        return 1;
+    }
+
     return 0;
 }
