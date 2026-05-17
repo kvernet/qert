@@ -3,6 +3,7 @@
 #include "statevector.hpp"
 #include "gates.hpp"
 #include "telemetry.hpp"
+#include "entropy.hpp"
 #include <build_info.hpp>
 
 #include <cstdio>
@@ -425,6 +426,141 @@ int main()
 
     std::fclose(f);
     std::printf("Telemetry tests passed.\n\n");
+
+    // ================================================================
+    // Entropy Tests
+    // ================================================================
+
+    // Test 1: |0...0⟩ state has zero entropy (N=4, half-chain k=2)
+    qert::Statevector q_zero(4);
+    double s0 = qert::compute_half_chain_entropy(q_zero.data(), q_zero.num_qubits());
+    if (std::abs(s0) > 1e-10)
+    {
+        std::fprintf(stderr, "FAIL: |0⟩ entropy = %.12f, expected 0\n", s0);
+        return 1;
+    }
+    std::printf("Entropy test 1 passed: |0...0⟩ has S=0\n");
+
+    // Test 2: Bell state (N=2, half-chain k=1) has entropy ln(2)
+    // Prepare: H on qubit 0, then CNOT control=0 target=1
+    // State: (|00⟩ + |11⟩)/√2
+    // Half-chain splits at k=1: qubit 0 in A, qubit 1 in B → S = ln(2)
+    qert::Statevector q_bell(2);
+    q_bell.reset_to_zero();
+    qert::apply_hadamard(q_bell.data(), q_bell.num_qubits(), 0);
+    qert::apply_cnot(q_bell.data(), q_bell.num_qubits(), 0, 1);
+
+    double s_bell = qert::compute_half_chain_entropy(q_bell.data(), q_bell.num_qubits());
+    double expected_bell = std::log(2.0); // ≈ 0.693147180560
+    if (std::abs(s_bell - expected_bell) > 1e-6)
+    {
+        std::fprintf(stderr, "FAIL: Bell state entropy = %.12f, expected %.12f\n",
+                     s_bell, expected_bell);
+        return 1;
+    }
+    std::printf("Entropy test 2 passed: Bell state has S=ln(2)=%.12f\n", s_bell);
+
+    // Test 3: Product state |+⟩⊗|+⟩ (N=2) has zero half-chain entropy
+    q_bell.reset_to_zero();
+    qert::apply_hadamard(q_bell.data(), q_bell.num_qubits(), 0);
+    qert::apply_hadamard(q_bell.data(), q_bell.num_qubits(), 1);
+    double s_product = qert::compute_half_chain_entropy(q_bell.data(), q_bell.num_qubits());
+    if (std::abs(s_product) > 1e-10)
+    {
+        std::fprintf(stderr, "FAIL: product state entropy = %.12f, expected 0\n", s_product);
+        return 1;
+    }
+    std::printf("Entropy test 3 passed: product state has S=0\n");
+
+    // Test 4: GHZ state (N=3, half-chain k=1) has entropy ln(2)
+    // |000⟩ + |111⟩, half-chain splits at k=1: qubit 0 in A, qubits 1,2 in B
+    qert::Statevector q_ghz(3);
+    q_ghz.reset_to_zero();
+    qert::apply_hadamard(q_ghz.data(), q_ghz.num_qubits(), 0);
+    qert::apply_cnot(q_ghz.data(), q_ghz.num_qubits(), 0, 1);
+    qert::apply_cnot(q_ghz.data(), q_ghz.num_qubits(), 0, 2);
+    double s_ghz = qert::compute_half_chain_entropy(q_ghz.data(), q_ghz.num_qubits());
+    if (std::abs(s_ghz - expected_bell) > 1e-6)
+    {
+        std::fprintf(stderr, "FAIL: GHZ entropy = %.12f, expected %.12f\n",
+                     s_ghz, expected_bell);
+        return 1;
+    }
+    std::printf("Entropy test 4 passed: GHZ state has S=ln(2)=%.12f\n", s_ghz);
+
+    // Test 5: Entropy grows with circuit depth (N=6, random brickwall)
+    qert::Statevector q_rand(6);
+    q_rand.reset_to_zero();
+
+    std::mt19937_64 rng_ent(42);
+
+    double prev_entropy = 0.0;
+    bool entropy_grew = false;
+
+    for (int layer = 0; layer < 20; ++layer)
+    {
+        if (layer % 2 == 0)
+        {
+            for (uint32_t q = 0; q < 5; q += 2)
+            {
+                auto mat = qert::generate_random_su4(rng_ent);
+                qert::apply_two_qubit_unitary(q_rand.data(), q_rand.num_qubits(),
+                                              q, q + 1, mat.data());
+            }
+        }
+        else
+        {
+            for (uint32_t q = 1; q < 5; q += 2)
+            {
+                auto mat = qert::generate_random_su4(rng_ent);
+                qert::apply_two_qubit_unitary(q_rand.data(), q_rand.num_qubits(),
+                                              q, q + 1, mat.data());
+            }
+        }
+
+        double s = qert::compute_half_chain_entropy(q_rand.data(), q_rand.num_qubits());
+
+        if (s > prev_entropy + 1e-10)
+        {
+            entropy_grew = true;
+        }
+        prev_entropy = s;
+    }
+
+    if (!entropy_grew)
+    {
+        std::fprintf(stderr, "FAIL: entropy did not grow during random circuit\n");
+        return 1;
+    }
+    std::printf("Entropy test 5 passed: entropy grows with random circuit depth\n");
+
+    // Test 6: entropy bound check
+    double max_entropy = 3.0 * std::log(2.0); // k=3, max = 3*ln(2) ≈ 2.079
+    if (prev_entropy > max_entropy + 1e-10)
+    {
+        std::fprintf(stderr, "FAIL: entropy %.12f exceeds bound %.12f\n",
+                     prev_entropy, max_entropy);
+        return 1;
+    }
+    std::printf("Entropy test 6 passed: entropy within theoretical bounds\n");
+
+    // Test 7: Bell state with explicit bipartition k=1 (N=4)
+    // Entangle qubits 0 and 1, leave 2 and 3 in |0⟩
+    // Bipartition at k=1: A={0}, B={1,2,3}
+    qert::Statevector q_bell4(4);
+    q_bell4.reset_to_zero();
+    qert::apply_hadamard(q_bell4.data(), q_bell4.num_qubits(), 0);
+    qert::apply_cnot(q_bell4.data(), q_bell4.num_qubits(), 0, 1);
+    double s_bell4_k1 = qert::compute_entropy(q_bell4.data(), q_bell4.num_qubits(), 1);
+    if (std::abs(s_bell4_k1 - expected_bell) > 1e-6)
+    {
+        std::fprintf(stderr, "FAIL: Bell N=4 k=1 entropy = %.12f, expected %.12f\n",
+                     s_bell4_k1, expected_bell);
+        return 1;
+    }
+    std::printf("Entropy test 7 passed: Bell state k=1 has S=ln(2)\n");
+
+    std::printf("Entropy tests passed.\n\n");
 
     // ================================================================
     std::printf("All tests passed.\n");
