@@ -1,3 +1,4 @@
+#include "common.hpp"
 #include "seed.hpp"
 
 #include <chrono>
@@ -38,7 +39,7 @@ namespace qert
         return g_rng_seed;
     }
 
-    // --- Deterministic Hashing (FNV-1a 64-bit) ---
+    // --- Deterministic hashing (FNV-1a 64-bit) ---
     // std::hash is intentionally unspecified across implementations.
     // FNV-1a is deterministic, platform-independent, and trivial to implement.
 
@@ -106,14 +107,27 @@ namespace qert
         std::string cpu_arch,
         std::string cpu_model,
         uint64_t timestamp_unix_ns)
-        : circuit_family(std::move(circuit_family)), num_qubits(num_qubits), circuit_depth_total(circuit_depth_total), qubit_mapping(std::move(qubit_mapping)), rng_seed(rng_seed), git_commit(std::move(git_commit)), compiler(std::move(compiler)), compiler_flags(std::move(compiler_flags)), cpu_arch(std::move(cpu_arch)), cpu_model(std::move(cpu_model)), timestamp_unix_ns(timestamp_unix_ns), physics_hash(0), environment_hash(0), full_hash(0)
+        : circuit_family(std::move(circuit_family)),
+          num_qubits(num_qubits),
+          circuit_depth_total(circuit_depth_total),
+          qubit_mapping(std::move(qubit_mapping)),
+          rng_seed(rng_seed),
+          git_commit(std::move(git_commit)),
+          compiler(std::move(compiler)),
+          compiler_flags(std::move(compiler_flags)),
+          cpu_arch(std::move(cpu_arch)),
+          cpu_model(std::move(cpu_model)),
+          timestamp_unix_ns(timestamp_unix_ns),
+          physics_hash(0),
+          environment_hash(0),
+          full_hash(0)
     {
         // --- Validation ---
-        if (num_qubits == 0 || num_qubits > 64)
+        if (num_qubits == 0 || num_qubits > MAX_QUBITS)
         {
             throw std::invalid_argument(
-                "num_qubits must be in [1, 64]. "
-                "Upper bound is a memory feasibility constraint (2^64 statevector).");
+                "num_qubits must be in [1, " + std::to_string(MAX_QUBITS) + "]. "
+                                                                            "Upper bound is a memory feasibility constraint.");
         }
         if (circuit_depth_total == 0)
         {

@@ -25,7 +25,7 @@ namespace qert
     public:
         // --- Construction ---
         // Creates statevector initialized to |0...0⟩.
-        // Throws std::invalid_argument if num_qubits == 0 or > 32.
+        // Throws std::invalid_argument if num_qubits == 0 or > MAX_QUBITS.
         explicit Statevector(uint32_t num_qubits);
 
         // Statevectors are expensive to copy. Allow moves, forbid copies.

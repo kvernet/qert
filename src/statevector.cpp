@@ -11,12 +11,13 @@ namespace qert
     Statevector::Statevector(uint32_t num_qubits)
         : num_qubits_(num_qubits), data_(1ULL << num_qubits, Complex{0.0, 0.0})
     {
-        if (num_qubits == 0 || num_qubits > 32)
+        if (num_qubits == 0 || num_qubits > MAX_QUBITS)
         {
             throw std::invalid_argument(
-                "num_qubits must be in [1, 32]. "
-                "N=32 requires 2^32 complex amplitudes (64 GB). "
-                "Upper bound is a memory feasibility constraint.");
+                "num_qubits must be in [1, " + std::to_string(MAX_QUBITS) + "]. "
+                                                                            "N=" +
+                std::to_string(MAX_QUBITS) + " requires 2^" +
+                std::to_string(MAX_QUBITS) + " complex amplitudes.");
         }
         reset_to_zero();
     }

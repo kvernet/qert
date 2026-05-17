@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <type_traits>
 
-// --- Design Note ---
+// --- Design note ---
 // All indices and numeric types are aliased rather than used directly.
 // This serves three purposes:
 //   1. Semantic clarity: StateIndex vs Qubit are distinct concepts.
@@ -14,12 +14,12 @@
 namespace qert
 {
 
-    // --- Fundamental Numeric Types ---
+    // --- Fundamental numeric types ---
 
     using Complex = std::complex<double>;
     using Amplitude = Complex;
 
-    // --- Semantic Index Types ---
+    // --- Semantic index types ---
 
     using StateIndex = uint64_t; // Index into statevector (0 to 2^N - 1)
     using Qubit = uint32_t;      // Qubit identifier (0 to N-1)
@@ -27,11 +27,12 @@ namespace qert
     using Depth = uint32_t;      // Circuit layer index
     using EventID = uint64_t;    // Monotonically increasing telemetry event counter
 
-    // --- Numerical Constants ---
+    // --- Numerical constants ---
 
+    constexpr uint32_t MAX_QUBITS = 32; // Memory feasibility: 2^32 = 64 GB statevector
     constexpr double NUMERICAL_EPSILON = 1e-12;
 
-    // --- Platform Assumptions ---
+    // --- Platform assumptions ---
 
     static_assert(sizeof(Complex) == 16, "Complex must be 128-bit");
 

@@ -1,4 +1,3 @@
-// src/seed.hpp
 #pragma once
 
 #include <cstdint>
