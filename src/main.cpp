@@ -4,6 +4,7 @@
 #include "gates.hpp"
 #include "telemetry.hpp"
 #include "entropy.hpp"
+#include "circuit.hpp"
 #include <build_info.hpp>
 
 #include <cstdio>
@@ -561,6 +562,163 @@ int main()
     std::printf("Entropy test 7 passed: Bell state k=1 has S=ln(2)\n");
 
     std::printf("Entropy tests passed.\n\n");
+
+
+    // ================================================================
+    // Circuit Tests
+    // ================================================================
+
+    // Test 1: Brickwall circuit structure (N=4, depth=4)
+    qert::Circuit circ = qert::Circuit::brickwall_1d(4, 4);
+
+    if (circ.num_qubits() != 4)
+    {
+        std::fprintf(stderr, "FAIL: circuit num_qubits\n");
+        return 1;
+    }
+    if (circ.depth() != 4)
+    {
+        std::fprintf(stderr, "FAIL: circuit depth\n");
+        return 1;
+    }
+
+    // N=4 brickwall:
+    // Layer 0 (even): pairs (0,1), (2,3) → 2 gates
+    // Layer 1 (odd):  pair (1,2)        → 1 gate
+    // Layer 2 (even): pairs (0,1), (2,3) → 2 gates
+    // Layer 3 (odd):  pair (1,2)        → 1 gate
+    // Total: 6 gates
+    if (circ.num_gates() != 6)
+    {
+        std::fprintf(stderr, "FAIL: expected 6 gates, got %u\n", circ.num_gates());
+        return 1;
+    }
+    if (circ.layer_size(0) != 2)
+    {
+        std::fprintf(stderr, "FAIL: layer 0 size\n");
+        return 1;
+    }
+    if (circ.layer_size(1) != 1)
+    {
+        std::fprintf(stderr, "FAIL: layer 1 size\n");
+        return 1;
+    }
+    std::printf("Circuit test 1 passed: brickwall structure correct\n");
+
+    // Test 2: Gate types are RANDOM_SU4
+    bool all_random = true;
+    for (uint32_t i = 0; i < circ.num_gates(); ++i)
+    {
+        if (circ.gate(i).type != qert::GateType::RANDOM_SU4)
+        {
+            all_random = false;
+            break;
+        }
+    }
+    if (!all_random)
+    {
+        std::fprintf(stderr, "FAIL: not all gates are RANDOM_SU4\n");
+        return 1;
+    }
+    std::printf("Circuit test 2 passed: all gates are RANDOM_SU4\n");
+
+    // Test 3: Qubit pairs don't overlap within a layer
+    for (uint32_t d = 0; d < circ.depth(); ++d)
+    {
+        std::vector<bool> used(4, false);
+        for (uint32_t i = 0; i < circ.num_gates(); ++i)
+        {
+            const auto &g = circ.gate(i);
+            if (g.depth != d)
+                continue;
+
+            if (used[g.control] || used[g.target])
+            {
+                std::fprintf(stderr, "FAIL: overlapping gates in layer %u\n", d);
+                return 1;
+            }
+            used[g.control] = true;
+            used[g.target] = true;
+        }
+    }
+    std::printf("Circuit test 3 passed: no overlapping qubits within layers\n");
+
+    // Test 4: Odd N brickwall (N=5, depth=3)
+    qert::Circuit circ_odd = qert::Circuit::brickwall_1d(5, 3);
+    // Layer 0: (0,1), (2,3) → qubit 4 idle
+    // Layer 1: (1,2), (3,4)
+    // Layer 2: (0,1), (2,3)
+    if (circ_odd.num_gates() != 6)
+    {
+        std::fprintf(stderr, "FAIL: odd N gate count, expected 6 got %u\n",
+                     circ_odd.num_gates());
+        return 1;
+    }
+    std::printf("Circuit test 4 passed: odd N brickwall correct\n");
+
+    // Test 5: Execute a brickwall circuit and check telemetry
+    qert::Statevector q_circ(4);
+    q_circ.reset_to_zero();
+
+    std::mt19937_64 rng_circ(99);
+    metadata = "{ \"test\": \"circuit_execution\" }";
+    qert::TelemetryRecorder rec("test_circuit_telemetry.csv", metadata);
+
+    qert::EventID event_id = 0;
+
+    for (uint32_t i = 0; i < circ.num_gates(); ++i)
+    {
+        const auto &g = circ.gate(i);
+
+        qert::TelemetryEvent ev;
+        ev.event_id = event_id++;
+        ev.depth = g.depth;
+        ev.gate_idx = g.gate_idx;
+        ev.execution_time_ns = 0; // placeholder
+        ev.l3_misses_delta = 0;   // placeholder
+        ev.tlb_misses_delta = 0;  // placeholder
+        ev.working_set_kb = 0;    // placeholder
+        ev.stride_entropy = 0.0;  // placeholder
+
+        // Compute entropy at even layers after all gates in that layer
+        bool is_last_gate_in_layer = (g.gate_idx == circ.layer_size(g.depth) - 1);
+        bool is_even_layer = (g.depth % 2 == 0);
+
+        if (is_last_gate_in_layer && is_even_layer)
+        {
+            ev.half_chain_entropy = qert::compute_half_chain_entropy(
+                q_circ.data(), q_circ.num_qubits());
+        }
+        else
+        {
+            ev.half_chain_entropy = std::nan("");
+        }
+
+        // Apply the gate
+        if (g.type == qert::GateType::RANDOM_SU4)
+        {
+            auto mat = qert::generate_random_su4(rng_circ);
+            qert::apply_two_qubit_unitary(
+                q_circ.data(), q_circ.num_qubits(),
+                g.control, g.target, mat.data());
+        }
+
+        rec.record(ev);
+    }
+
+    rec.close();
+
+    // Verify file exists
+    f = std::fopen("test_circuit_telemetry.csv", "r");
+    if (!f)
+    {
+        std::fprintf(stderr, "FAIL: circuit telemetry file not created\n");
+        return 1;
+    }
+    std::fclose(f);
+    std::printf("Circuit test 5 passed: circuit execution + telemetry works\n");
+
+    std::printf("Circuit tests passed.\n\n");
 
     // ================================================================
     std::printf("All tests passed.\n");

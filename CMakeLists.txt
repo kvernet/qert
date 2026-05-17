@@ -47,6 +47,8 @@ add_executable(qert
     src/telemetry.cpp
     src/entropy.hpp
     src/entropy.cpp
+    src/circuit.hpp
+    src/circuit.cpp
     src/main.cpp
 )
 
