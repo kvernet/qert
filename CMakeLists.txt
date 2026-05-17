@@ -43,6 +43,8 @@ add_executable(qert
     src/statevector.cpp
     src/gates.hpp
     src/gates.cpp
+    src/telemetry.hpp
+    src/telemetry.cpp
     src/main.cpp
 )
 

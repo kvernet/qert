@@ -2,6 +2,7 @@
 #include "seed.hpp"
 #include "statevector.hpp"
 #include "gates.hpp"
+#include "telemetry.hpp"
 #include <build_info.hpp>
 
 #include <cstdio>
@@ -327,6 +328,103 @@ int main()
         }
     }
     std::printf("Inverse consistency test passed.\n\n");
+
+    // ================================================================
+    // Telemetry Tests
+    // ================================================================
+
+    // Test 1: Basic record and file output
+    std::string metadata = "{ \"test\": true }";
+    qert::TelemetryRecorder recorder("test_telemetry.csv", metadata);
+
+    qert::TelemetryEvent ev;
+    ev.event_id = 0;
+    ev.depth = 0;
+    ev.gate_idx = 0;
+    ev.execution_time_ns = 1234;
+    ev.l3_misses_delta = 42;
+    ev.tlb_misses_delta = 3;
+    ev.working_set_kb = 64;
+    ev.stride_entropy = 2.5;
+    ev.half_chain_entropy = std::nan(""); // not sampled
+
+    recorder.record(ev);
+
+    ev.event_id = 1;
+    ev.depth = 0;
+    ev.gate_idx = 1;
+    ev.execution_time_ns = 1189;
+    ev.l3_misses_delta = 38;
+    ev.tlb_misses_delta = 2;
+    ev.working_set_kb = 64;
+    ev.stride_entropy = 2.3;
+    ev.half_chain_entropy = 0.693147180560; // ln(2) - sampled at even layer
+
+    recorder.record(ev);
+
+    if (recorder.event_count() != 2)
+    {
+        std::fprintf(stderr, "FAIL: telemetry event count\n");
+        return 1;
+    }
+
+    recorder.close();
+
+    // Test 2: Verify file exists and has correct structure
+    std::FILE *f = std::fopen("test_telemetry.csv", "r");
+    if (!f)
+    {
+        std::fprintf(stderr, "FAIL: telemetry file not created\n");
+        return 1;
+    }
+
+    char line[512];
+
+    // Line 1: metadata comment
+    if (!std::fgets(line, sizeof(line), f))
+    {
+        std::fprintf(stderr, "FAIL: no metadata line\n");
+        return 1;
+    }
+    if (line[0] != '#')
+    {
+        std::fprintf(stderr, "FAIL: metadata line missing '#' prefix\n");
+        return 1;
+    }
+
+    // Line 2: CSV header
+    if (!std::fgets(line, sizeof(line), f))
+    {
+        std::fprintf(stderr, "FAIL: no header line\n");
+        return 1;
+    }
+    if (std::string(line).find("event_id") == std::string::npos)
+    {
+        std::fprintf(stderr, "FAIL: header missing 'event_id'\n");
+        return 1;
+    }
+
+    // Line 3: first data row (NaN entropy)
+    if (!std::fgets(line, sizeof(line), f))
+    {
+        std::fprintf(stderr, "FAIL: no first data row\n");
+        return 1;
+    }
+    if (std::string(line).find("nan") == std::string::npos)
+    {
+        std::fprintf(stderr, "FAIL: first row should contain 'nan'\n");
+        return 1;
+    }
+
+    // Line 4: second data row (numeric entropy)
+    if (!std::fgets(line, sizeof(line), f))
+    {
+        std::fprintf(stderr, "FAIL: no second data row\n");
+        return 1;
+    }
+
+    std::fclose(f);
+    std::printf("Telemetry tests passed.\n\n");
 
     // ================================================================
     std::printf("All tests passed.\n");
