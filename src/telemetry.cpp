@@ -20,7 +20,25 @@ namespace qert
 
         // Write metadata as a JSON comment line.
         // The '#' prefix makes it a comment for CSV tools but preserves the JSON.
-        std::fprintf(file_, "# %s\n", metadata_json.c_str());
+        std::string compact_json;
+        for (char c : metadata_json)
+        {
+            if (c == '\n')
+            {
+                compact_json += ' '; // Replace newline with space.
+            }
+            else if (c == '\r')
+            {
+                // Skip carriage returns.
+            }
+            else
+            {
+                compact_json += c;
+            }
+        }
+
+        // Write metadata as a single JSON comment line.
+        std::fprintf(file_, "# %s\n", compact_json.c_str());
 
         // Write CSV header.
         std::fprintf(file_,

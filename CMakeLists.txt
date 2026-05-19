@@ -13,14 +13,20 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # --- Compiler Warnings ---
+set(QERT_WARNING_FLAGS "")
+
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    add_compile_options(-Wall -Wextra -Wpedantic)
+    set(QERT_WARNING_FLAGS
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
 endif()
 
 # --- Git Commit (for reproducibility metadata) ---
 execute_process(
     COMMAND git rev-parse --short HEAD
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     OUTPUT_VARIABLE GIT_COMMIT
     OUTPUT_STRIP_TRAILING_WHITESPACE
     ERROR_QUIET
@@ -33,10 +39,13 @@ endif()
 set(QERT_COMPILER "${CMAKE_CXX_COMPILER_ID}")
 set(QERT_COMPILER_VERSION "${CMAKE_CXX_COMPILER_VERSION}")
 
+# Convert compiler flags list -> string
+string(JOIN " " QERT_COMPILER_FLAGS ${QERT_WARNING_FLAGS})
+
 # --- Build Info Header (generated) ---
 configure_file(
-    ${CMAKE_SOURCE_DIR}/src/build_info.hpp.in
-    ${CMAKE_BINARY_DIR}/generated/build_info.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/build_info.hpp.in
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/build_info.hpp
 )
 
 # --- Core Library ---
@@ -57,8 +66,13 @@ add_library(qert_core STATIC
 )
 
 target_include_directories(qert_core PUBLIC
-    ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_BINARY_DIR}/generated
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_BINARY_DIR}/generated
+)
+
+# Apply warning flags to target
+target_compile_options(qert_core PRIVATE
+    ${QERT_WARNING_FLAGS}
 )
 
 # --- Debug Build: enable assertions and debug telemetry ---
@@ -102,18 +116,18 @@ if(BUILD_TESTS)
     enable_testing()
 
     # Download Catch2 v3 amalgamated files if not present
-    if(NOT EXISTS ${CMAKE_SOURCE_DIR}/tests/catch_amalgamated.hpp)
+    if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/catch_amalgamated.hpp)
         file(DOWNLOAD
             https://github.com/catchorg/Catch2/releases/download/v3.15.0/catch_amalgamated.hpp
-            ${CMAKE_SOURCE_DIR}/tests/catch_amalgamated.hpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/catch_amalgamated.hpp
             SHOW_PROGRESS
         )
     endif()
 
-    if(NOT EXISTS ${CMAKE_SOURCE_DIR}/tests/catch_amalgamated.cpp)
+    if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/catch_amalgamated.cpp)
         file(DOWNLOAD
             https://github.com/catchorg/Catch2/releases/download/v3.15.0/catch_amalgamated.cpp
-            ${CMAKE_SOURCE_DIR}/tests/catch_amalgamated.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/catch_amalgamated.cpp
             SHOW_PROGRESS
         )
     endif()
@@ -133,8 +147,12 @@ if(BUILD_TESTS)
 
     target_link_libraries(qert_tests PRIVATE qert_core)
     target_include_directories(qert_tests PRIVATE
-        ${CMAKE_SOURCE_DIR}/tests
-        ${CMAKE_BINARY_DIR}/generated
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+        ${CMAKE_CURRENT_BINARY_DIR}/generated
+    )
+
+    target_compile_options(qert_tests PRIVATE
+        ${QERT_WARNING_FLAGS}
     )
 
     add_test(NAME qert_tests COMMAND qert_tests)
@@ -149,7 +167,10 @@ if(BUILD_BENCHMARKS)
     )
     target_link_libraries(qert_benchmarks PRIVATE qert_core)
     target_include_directories(qert_benchmarks PRIVATE
-        ${CMAKE_BINARY_DIR}/generated
+        ${CMAKE_CURRENT_BINARY_DIR}/generated
+    )
+    target_compile_options(qert_benchmarks PRIVATE
+        ${QERT_WARNING_FLAGS}
     )
     message(STATUS "Benchmarks enabled")
 endif()

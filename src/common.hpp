@@ -30,6 +30,7 @@ namespace qert
     // --- Numerical constants ---
 
     constexpr uint32_t MAX_QUBITS = 32; // Memory feasibility: 2^32 = 64 GB statevector
+    constexpr uint32_t MAX_ENTROPY_SUBSYSTEM = 10;
     constexpr double NUMERICAL_EPSILON = 1e-12;
 
     // --- Platform assumptions ---

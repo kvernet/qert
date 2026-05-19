@@ -13,7 +13,6 @@ namespace qert
     namespace
     {
 
-        constexpr uint32_t MAX_ENTROPY_SUBSYSTEM = 10;
         constexpr double EPS = 1e-14;
         constexpr int MAX_JACOBI_SWEEPS = 100;
 

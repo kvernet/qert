@@ -1,3 +1,13 @@
+// qert — Quantum Execution Runtime Telemetry
+// Single-circuit experiment runner.
+//
+// Usage:
+//   qert --num-qubits 16 --depth 48 --seed 42
+//        --mapping lexicographic --output results/run001.csv
+//
+// All parameters are required. Output is a self-describing CSV file
+// with metadata header and per-gate telemetry rows.
+
 #include "common.hpp"
 #include "seed.hpp"
 #include "statevector.hpp"
@@ -7,720 +17,362 @@
 #include "circuit.hpp"
 #include <build_info.hpp>
 
+#include <chrono>
 #include <cstdio>
-#include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <random>
+#include <string>
+#include <vector>
 
-// --- Test Helpers ---
 namespace
 {
 
-    bool nearly_equal(double a, double b, double eps = 1e-10)
+    // --- CLI Argument Parsing ---
+
+    struct CliArgs
     {
-        return std::abs(a - b) < eps;
+        uint32_t num_qubits = 0;
+        uint32_t depth = 0;
+        uint64_t seed = 0;
+        std::string mapping;
+        std::string output_path;
+        std::string circuit_family = "brickwall_1d";
+        bool valid = false;
+    };
+
+    CliArgs parse_args(int argc, char **argv)
+    {
+        CliArgs args;
+
+        for (int i = 1; i < argc; ++i)
+        {
+            std::string arg = argv[i];
+
+            if (arg == "--num-qubits" && i + 1 < argc)
+            {
+                args.num_qubits = static_cast<uint32_t>(std::atoi(argv[++i]));
+            }
+            else if (arg == "--depth" && i + 1 < argc)
+            {
+                args.depth = static_cast<uint32_t>(std::atoi(argv[++i]));
+            }
+            else if (arg == "--seed" && i + 1 < argc)
+            {
+                args.seed = static_cast<uint64_t>(std::atoll(argv[++i]));
+            }
+            else if (arg == "--mapping" && i + 1 < argc)
+            {
+                args.mapping = argv[++i];
+            }
+            else if (arg == "--output" && i + 1 < argc)
+            {
+                args.output_path = argv[++i];
+            }
+            else if (arg == "--circuit-family" && i + 1 < argc)
+            {
+                args.circuit_family = argv[++i];
+            }
+            else if (arg == "--help" || arg == "-h")
+            {
+                std::printf(
+                    "qert — Quantum Execution Runtime Telemetry\n"
+                    "\n"
+                    "Usage:\n"
+                    "  qert --num-qubits N --depth D --seed S --mapping M --output PATH\n"
+                    "\n"
+                    "Required arguments:\n"
+                    "  --num-qubits N    Number of qubits (1-%u)\n"
+                    "  --depth D         Circuit depth (number of layers)\n"
+                    "  --seed S          RNG seed (non-zero)\n"
+                    "  --mapping M       Qubit mapping: lexicographic, gray, locality_aware\n"
+                    "  --output PATH     Output CSV file path\n"
+                    "\n"
+                    "Optional arguments:\n"
+                    "  --circuit-family F  Circuit family (default: brickwall_1d)\n"
+                    "  --help, -h          Show this message\n",
+                    qert::MAX_QUBITS);
+                return args; // valid == false
+            }
+            else
+            {
+                std::fprintf(stderr, "Unknown argument: %s\n", arg.c_str());
+                return args;
+            }
+        }
+
+        // Validate required arguments.
+        if (args.num_qubits == 0 || args.depth == 0 || args.seed == 0 ||
+            args.mapping.empty() || args.output_path.empty())
+        {
+            std::fprintf(stderr, "Error: missing required arguments. Use --help for usage.\n");
+            return args;
+        }
+
+        if (args.num_qubits > qert::MAX_QUBITS)
+        {
+            std::fprintf(stderr, "Error: num_qubits %u exceeds MAX_QUBITS %u\n",
+                         args.num_qubits, qert::MAX_QUBITS);
+            return args;
+        }
+
+        args.valid = true;
+        return args;
     }
 
-    bool nearly_equal(qert::Complex a, qert::Complex b, double eps = 1e-10)
+    // --- CPU Detection ---
+
+    std::string detect_cpu_model()
     {
-        return std::abs(a.real() - b.real()) < eps &&
-               std::abs(a.imag() - b.imag()) < eps;
+        // Try to read from /proc/cpuinfo (Linux) or sysctl (macOS).
+        // Returns "unknown" if detection fails.
+
+#ifdef __linux__
+        FILE *f = std::fopen("/proc/cpuinfo", "r");
+        if (!f)
+            return "unknown";
+
+        char line[256];
+        while (std::fgets(line, sizeof(line), f))
+        {
+            if (std::strncmp(line, "model name", 10) == 0)
+            {
+                const char *colon = std::strchr(line, ':');
+                if (colon)
+                {
+                    std::fclose(f);
+                    std::string model = colon + 2; // Skip ": "
+                    // Trim trailing newline.
+                    while (!model.empty() && (model.back() == '\n' || model.back() == '\r'))
+                    {
+                        model.pop_back();
+                    }
+                    return model;
+                }
+            }
+        }
+        std::fclose(f);
+        return "unknown";
+#elif defined(__APPLE__)
+        FILE *f = std::popen("sysctl -n machdep.cpu.brand_string", "r");
+        if (!f)
+            return "unknown";
+
+        char buf[256];
+        if (std::fgets(buf, sizeof(buf), f))
+        {
+            std::pclose(f);
+            std::string model = buf;
+            while (!model.empty() && (model.back() == '\n' || model.back() == '\r'))
+            {
+                model.pop_back();
+            }
+            return model;
+        }
+        std::pclose(f);
+        return "unknown";
+#else
+        return "unknown";
+#endif
+    }
+
+    std::string detect_cpu_arch()
+    {
+#ifdef __x86_64__
+        return "x86_64";
+#elif defined(__aarch64__)
+        return "aarch64";
+#elif defined(__arm__)
+        return "arm";
+#else
+        return "unknown";
+#endif
+    }
+
+    uint64_t get_current_unix_ns()
+    {
+        auto now = std::chrono::system_clock::now();
+        auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                      now.time_since_epoch())
+                      .count();
+        return static_cast<uint64_t>(ns);
+    }
+
+    // --- Telemetry stubs (real implementation when PAPI is wired) ---
+
+#ifdef QERT_HAS_PAPI
+// Real PAPI counters will go here in Phase 2.
+#error "PAPI integration not yet implemented"
+#endif
+
+    struct HardwareCounters
+    {
+        uint64_t l3_misses_delta = 0;
+        uint64_t tlb_misses_delta = 0;
+    };
+
+    HardwareCounters read_hardware_counters()
+    {
+        // Stub: returns zeros until PAPI is integrated.
+        return {};
+    }
+
+    uint64_t estimate_working_set_kb(const qert::Complex * /*sv*/, uint32_t num_qubits)
+    {
+        // Stub: rough estimate based on statevector size.
+        // Real implementation will use page-fault counting or address tracing.
+        // For now: 2^N amplitudes * 16 bytes per amplitude / 1024 bytes per KB.
+        uint64_t bytes = (1ULL << num_qubits) * sizeof(qert::Complex);
+        return bytes / 1024;
+    }
+
+    double compute_stride_entropy(
+        const qert::Complex * /*sv*/,
+        uint32_t /*num_qubits*/,
+        qert::Qubit /*control*/, qert::Qubit /*target*/)
+    {
+        // Stub: returns placeholder until address tracing is implemented.
+        return 0.0;
     }
 
 } // anonymous namespace
 
-int main()
+// ============================================================================
+// Main
+// ============================================================================
+
+int main(int argc, char **argv)
 {
-    // ================================================================
-    // Seed Tests
-    // ================================================================
-    qert::set_rng_seed(42);
-    if (qert::get_rng_seed() != 42)
+    // --- Parse arguments ---
+    CliArgs args = parse_args(argc, argv);
+    if (!args.valid)
     {
-        std::fprintf(stderr, "FAIL: seed roundtrip\n");
         return 1;
     }
 
-    qert::RunMetadata meta(
-        "brickwall_1d", 16, 48, "lexicographic", 42,
+    // --- Initialize RNG ---
+    qert::set_rng_seed(args.seed);
+    std::mt19937_64 rng(args.seed);
+
+    // --- Build metadata ---
+    uint64_t timestamp = get_current_unix_ns();
+    std::string compiler_str = std::string(qert::COMPILER_ID) + "-" +
+                               qert::COMPILER_VERSION;
+
+    qert::RunMetadata metadata(
+        args.circuit_family,
+        args.num_qubits,
+        args.depth,
+        args.mapping,
+        args.seed,
         qert::GIT_COMMIT,
-        std::string(qert::COMPILER_ID) + "-" + qert::COMPILER_VERSION,
-        "-O2", "x86_64", "test-cpu", 0);
+        compiler_str,
+        qert::COMPILER_FLAGS_DEFAULT,
+        detect_cpu_arch(),
+        detect_cpu_model(),
+        timestamp);
 
-    std::string json = meta.to_json();
-    std::printf("%s\n", json.c_str());
-    meta.write_to_file("test_metadata.json");
-
-    qert::RunMetadata meta2(
-        "brickwall_1d", 16, 48, "lexicographic", 42,
-        qert::GIT_COMMIT,
-        std::string(qert::COMPILER_ID) + "-" + qert::COMPILER_VERSION,
-        "-O2", "x86_64", "test-cpu", 1);
-
-    if (meta.physics_hash != meta2.physics_hash)
+    // --- Build circuit ---
+    if (args.circuit_family != "brickwall_1d")
     {
-        std::fprintf(stderr, "FAIL: physics_hash not stable\n");
-        return 1;
-    }
-    if (meta.full_hash == meta2.full_hash)
-    {
-        std::fprintf(stderr, "FAIL: full_hash should differ\n");
-        return 1;
-    }
-    std::printf("Seed tests passed.\n\n");
-
-    // ================================================================
-    // Statevector Tests
-    // ================================================================
-    qert::Statevector sv(3); // 3 qubits, 8 amplitudes
-    if (sv.num_qubits() != 3)
-    {
-        std::fprintf(stderr, "FAIL: num_qubits\n");
-        return 1;
-    }
-    if (sv.size() != 8)
-    {
-        std::fprintf(stderr, "FAIL: size\n");
-        return 1;
-    }
-    // Initial state |000⟩
-    if (!nearly_equal(sv.amplitude(0), qert::Complex{1.0, 0.0}))
-    {
-        std::fprintf(stderr, "FAIL: initial state |000⟩\n");
-        return 1;
-    }
-    if (!nearly_equal(sv.amplitude(1), qert::Complex{0.0, 0.0}))
-    {
-        std::fprintf(stderr, "FAIL: amplitude at |001⟩ should be 0\n");
-        return 1;
-    }
-    if (!nearly_equal(sv.norm(), 1.0))
-    {
-        std::fprintf(stderr, "FAIL: norm\n");
-        return 1;
-    }
-    // Reset
-    sv.amplitude(3) = qert::Complex{0.5, 0.0};
-    sv.reset_to_zero();
-    if (!nearly_equal(sv.amplitude(3), qert::Complex{0.0, 0.0}))
-    {
-        std::fprintf(stderr, "FAIL: reset_to_zero\n");
-        return 1;
-    }
-    // Move semantics
-    qert::Statevector sv2(std::move(sv));
-    if (sv2.num_qubits() != 3)
-    {
-        std::fprintf(stderr, "FAIL: move construction\n");
-        return 1;
-    }
-    std::printf("Statevector tests passed.\n\n");
-
-    // ================================================================
-    // Gate Tests (N=3, single qubit gates)
-    // ================================================================
-    qert::Statevector q(3);
-
-    // Test Hadamard: H|0⟩ = (|0⟩+|1⟩)/√2
-    q.reset_to_zero();
-    qert::apply_hadamard(q.data(), q.num_qubits(), 0);
-    if (!nearly_equal(q.amplitude(0), qert::Complex{0.5, 0.0} * std::sqrt(2.0) /* 1/√2 */))
-    {
-        // amplitude of |000⟩ after H on qubit 0
-        double expected = 1.0 / std::sqrt(2.0);
-        if (!nearly_equal(std::abs(q.amplitude(0)), expected))
-        {
-            std::fprintf(stderr, "FAIL: Hadamard |000⟩ amplitude\n");
-            return 1;
-        }
-    }
-    if (!nearly_equal(std::abs(q.amplitude(1)), 1.0 / std::sqrt(2.0)))
-    {
-        std::fprintf(stderr, "FAIL: Hadamard |001⟩ amplitude\n");
-        return 1;
-    }
-    if (!nearly_equal(q.norm(), 1.0))
-    {
-        std::fprintf(stderr, "FAIL: Hadamard norm\n");
+        std::fprintf(
+            stderr, "Error: unknown circuit family '%s'\n",
+            args.circuit_family.c_str());
         return 1;
     }
 
-    // Test Pauli-X: X|0⟩ = |1⟩
-    q.reset_to_zero();
-    qert::apply_pauli_x(q.data(), q.num_qubits(), 1);
-    if (!nearly_equal(std::abs(q.amplitude(0)), 0.0))
-    {
-        std::fprintf(stderr, "FAIL: X|0⟩ should not have |000⟩ component\n");
-        return 1;
-    }
-    if (!nearly_equal(std::abs(q.amplitude(2)), 1.0))
-    { // bit 1 set → index 2
-        std::fprintf(stderr, "FAIL: X|0⟩ → |010⟩\n");
-        return 1;
-    }
+    qert::Circuit circuit = qert::Circuit::brickwall_1d(args.num_qubits, args.depth);
 
-    // Test Pauli-Z: Z|1⟩ = -|1⟩
-    q.reset_to_zero();
-    qert::apply_pauli_x(q.data(), q.num_qubits(), 0); // |000⟩ → |001⟩
-    qert::apply_pauli_z(q.data(), q.num_qubits(), 0); // |001⟩ → -|001⟩
-    if (!nearly_equal(q.amplitude(1), qert::Complex{-1.0, 0.0}))
-    {
-        std::fprintf(stderr, "FAIL: ZX|0⟩ = -|1⟩\n");
-        return 1;
-    }
+    // --- Initialize statevector ---
+    qert::Statevector sv(args.num_qubits);
 
-    // Test Pauli-Y: Y|0⟩ = i|1⟩
-    q.reset_to_zero();
-    qert::apply_pauli_y(q.data(), q.num_qubits(), 0);
-    if (!nearly_equal(q.amplitude(0), qert::Complex{0.0, 0.0}))
-    {
-        std::fprintf(stderr, "FAIL: Y|0⟩ should have zero |000⟩\n");
-        return 1;
-    }
-    if (!nearly_equal(q.amplitude(1), qert::Complex{0.0, 1.0}))
-    {
-        std::fprintf(stderr, "FAIL: Y|0⟩ = i|1⟩\n");
-        return 1;
-    }
+    // --- Initialize telemetry ---
+    std::string metadata_json = metadata.to_json();
+    qert::TelemetryRecorder recorder(args.output_path, metadata_json);
 
-    // Test H then H = I
-    q.reset_to_zero();
-    qert::apply_hadamard(q.data(), q.num_qubits(), 0);
-    qert::apply_hadamard(q.data(), q.num_qubits(), 0);
-    if (!nearly_equal(q.amplitude(0), qert::Complex{1.0, 0.0}))
-    {
-        std::fprintf(stderr, "FAIL: H*H = I\n");
-        return 1;
-    }
-
-    std::printf("Single-qubit gate tests passed.\n\n");
-
-    // ================================================================
-    // Two-Qubit Gate Tests (N=3)
-    // ================================================================
-
-    // Test CNOT: |10⟩ → |11⟩ (control=1, target=0)
-    // Prepare |010⟩ = qubit 1 = |1⟩
-    q.reset_to_zero();
-    qert::apply_pauli_x(q.data(), q.num_qubits(), 1); // |000⟩ → |010⟩
-    // CNOT control=1, target=0: |010⟩ → |011⟩ (both bits set)
-    qert::apply_cnot(q.data(), q.num_qubits(), 1, 0);
-    if (!nearly_equal(std::abs(q.amplitude(3)), 1.0))
-    { // |011⟩ = index 3
-        std::fprintf(stderr, "FAIL: CNOT |010⟩ → |011⟩\n");
-        return 1;
-    }
-    if (!nearly_equal(std::abs(q.amplitude(2)), 0.0))
-    {
-        std::fprintf(stderr, "FAIL: CNOT should not leave |010⟩\n");
-        return 1;
-    }
-
-    // Test CNOT again (should return to original)
-    qert::apply_cnot(q.data(), q.num_qubits(), 1, 0);
-    if (!nearly_equal(std::abs(q.amplitude(2)), 1.0))
-    {
-        std::fprintf(stderr, "FAIL: CNOT*CNOT = I\n");
-        return 1;
-    }
-
-    // Test CZ: |11⟩ → -|11⟩
-    q.reset_to_zero();
-    qert::apply_pauli_x(q.data(), q.num_qubits(), 0); // |001⟩
-    qert::apply_pauli_x(q.data(), q.num_qubits(), 1); // |011⟩
-    qert::apply_cz(q.data(), q.num_qubits(), 1, 0);
-    if (!nearly_equal(q.amplitude(3), qert::Complex{-1.0, 0.0}))
-    {
-        std::fprintf(stderr, "FAIL: CZ|11⟩ = -|11⟩\n");
-        return 1;
-    }
-
-    // Test SWAP: |01⟩ ↔ |10⟩
-    q.reset_to_zero();
-    qert::apply_pauli_x(q.data(), q.num_qubits(), 0); // |001⟩
-    qert::apply_swap(q.data(), q.num_qubits(), 0, 1); // swap bits 0 and 1
-    if (!nearly_equal(std::abs(q.amplitude(2)), 1.0))
-    { // |010⟩
-        std::fprintf(stderr, "FAIL: SWAP |001⟩ → |010⟩\n");
-        return 1;
-    }
-
-    std::printf("Two-qubit gate tests passed.\n\n");
-
-    // ================================================================
-    // Random SU(4) Tests
-    // ================================================================
-    std::mt19937_64 rng(12345);
-
-    // Generate and test unitarity
-    auto mat = qert::generate_random_su4(rng);
-
-    // Check U†U ≈ I
-    for (int r = 0; r < 4; ++r)
-    {
-        for (int c = 0; c < 4; ++c)
-        {
-            qert::Complex dot{0.0, 0.0};
-            for (int k = 0; k < 4; ++k)
-            {
-                // conj(U[k*4+r]) * U[k*4+c] = (U†)[r,k] * U[k,c]
-                dot += std::conj(mat[k * 4 + r]) * mat[k * 4 + c];
-            }
-            qert::Complex expected = (r == c) ? qert::Complex{1.0, 0.0} : qert::Complex{0.0, 0.0};
-            if (!nearly_equal(dot, expected, 1e-8))
-            {
-                std::fprintf(stderr, "FAIL: SU(4) unitarity at (%d,%d)\n", r, c);
-                return 1;
-            }
-        }
-    }
-    std::printf("SU(4) unitarity test passed.\n");
-
-    // Test norm preservation under random SU(4) application
-    q.reset_to_zero();
-    qert::apply_hadamard(q.data(), q.num_qubits(), 0);
-    qert::apply_hadamard(q.data(), q.num_qubits(), 1);
-    double norm_before = q.norm();
-    qert::apply_two_qubit_unitary(q.data(), q.num_qubits(), 0, 1, mat.data());
-    double norm_after = q.norm();
-    if (!nearly_equal(norm_before, norm_after))
-    {
-        std::fprintf(stderr, "FAIL: norm not preserved under SU(4)\n");
-        return 1;
-    }
-    std::printf("SU(4) norm preservation test passed.\n\n");
-
-    // ================================================================
-    // Inverse Consistency Test
-    // ================================================================
-    q.reset_to_zero();
-    qert::apply_hadamard(q.data(), q.num_qubits(), 0); // prepare non-trivial state
-
-    // Copy state
-    qert::Statevector q_copy(3);
-    for (qert::StateIndex i = 0; i < q.size(); ++i)
-    {
-        q_copy.amplitude(i) = q.amplitude(i);
-    }
-
-    // Generate another random SU(4)
-    auto mat2 = qert::generate_random_su4(rng);
-
-    // Compute U† (conjugate transpose)
-    qert::Complex mat2_dagger[16];
-    for (int r = 0; r < 4; ++r)
-    {
-        for (int c = 0; c < 4; ++c)
-        {
-            mat2_dagger[r * 4 + c] = std::conj(mat2[c * 4 + r]);
-        }
-    }
-
-    // Apply U then U†
-    qert::apply_two_qubit_unitary(q.data(), q.num_qubits(), 0, 1, mat2.data());
-    qert::apply_two_qubit_unitary(q.data(), q.num_qubits(), 0, 1, mat2_dagger);
-
-    // Should recover original state
-    for (qert::StateIndex i = 0; i < q.size(); ++i)
-    {
-        if (!nearly_equal(q.amplitude(i), q_copy.amplitude(i), 1e-8))
-        {
-            std::fprintf(stderr, "FAIL: U†U = I at index %llu\n",
-                         (unsigned long long)i);
-            return 1;
-        }
-    }
-    std::printf("Inverse consistency test passed.\n\n");
-
-    // ================================================================
-    // Telemetry Tests
-    // ================================================================
-
-    // Test 1: Basic record and file output
-    std::string metadata = "{ \"test\": true }";
-    qert::TelemetryRecorder recorder("test_telemetry.csv", metadata);
-
-    qert::TelemetryEvent ev;
-    ev.event_id = 0;
-    ev.depth = 0;
-    ev.gate_idx = 0;
-    ev.execution_time_ns = 1234;
-    ev.l3_misses_delta = 42;
-    ev.tlb_misses_delta = 3;
-    ev.working_set_kb = 64;
-    ev.stride_entropy = 2.5;
-    ev.half_chain_entropy = std::nan(""); // not sampled
-
-    recorder.record(ev);
-
-    ev.event_id = 1;
-    ev.depth = 0;
-    ev.gate_idx = 1;
-    ev.execution_time_ns = 1189;
-    ev.l3_misses_delta = 38;
-    ev.tlb_misses_delta = 2;
-    ev.working_set_kb = 64;
-    ev.stride_entropy = 2.3;
-    ev.half_chain_entropy = 0.693147180560; // ln(2) - sampled at even layer
-
-    recorder.record(ev);
-
-    if (recorder.event_count() != 2)
-    {
-        std::fprintf(stderr, "FAIL: telemetry event count\n");
-        return 1;
-    }
-
-    recorder.close();
-
-    // Test 2: Verify file exists and has correct structure
-    std::FILE *f = std::fopen("test_telemetry.csv", "r");
-    if (!f)
-    {
-        std::fprintf(stderr, "FAIL: telemetry file not created\n");
-        return 1;
-    }
-
-    char line[512];
-
-    // Line 1: metadata comment
-    if (!std::fgets(line, sizeof(line), f))
-    {
-        std::fprintf(stderr, "FAIL: no metadata line\n");
-        return 1;
-    }
-    if (line[0] != '#')
-    {
-        std::fprintf(stderr, "FAIL: metadata line missing '#' prefix\n");
-        return 1;
-    }
-
-    // Line 2: CSV header
-    if (!std::fgets(line, sizeof(line), f))
-    {
-        std::fprintf(stderr, "FAIL: no header line\n");
-        return 1;
-    }
-    if (std::string(line).find("event_id") == std::string::npos)
-    {
-        std::fprintf(stderr, "FAIL: header missing 'event_id'\n");
-        return 1;
-    }
-
-    // Line 3: first data row (NaN entropy)
-    if (!std::fgets(line, sizeof(line), f))
-    {
-        std::fprintf(stderr, "FAIL: no first data row\n");
-        return 1;
-    }
-    if (std::string(line).find("nan") == std::string::npos)
-    {
-        std::fprintf(stderr, "FAIL: first row should contain 'nan'\n");
-        return 1;
-    }
-
-    // Line 4: second data row (numeric entropy)
-    if (!std::fgets(line, sizeof(line), f))
-    {
-        std::fprintf(stderr, "FAIL: no second data row\n");
-        return 1;
-    }
-
-    std::fclose(f);
-    std::printf("Telemetry tests passed.\n\n");
-
-    // ================================================================
-    // Entropy Tests
-    // ================================================================
-
-    // Test 1: |0...0⟩ state has zero entropy (N=4, half-chain k=2)
-    qert::Statevector q_zero(4);
-    double s0 = qert::compute_half_chain_entropy(q_zero.data(), q_zero.num_qubits());
-    if (std::abs(s0) > 1e-10)
-    {
-        std::fprintf(stderr, "FAIL: |0⟩ entropy = %.12f, expected 0\n", s0);
-        return 1;
-    }
-    std::printf("Entropy test 1 passed: |0...0⟩ has S=0\n");
-
-    // Test 2: Bell state (N=2, half-chain k=1) has entropy ln(2)
-    // Prepare: H on qubit 0, then CNOT control=0 target=1
-    // State: (|00⟩ + |11⟩)/√2
-    // Half-chain splits at k=1: qubit 0 in A, qubit 1 in B → S = ln(2)
-    qert::Statevector q_bell(2);
-    q_bell.reset_to_zero();
-    qert::apply_hadamard(q_bell.data(), q_bell.num_qubits(), 0);
-    qert::apply_cnot(q_bell.data(), q_bell.num_qubits(), 0, 1);
-
-    double s_bell = qert::compute_half_chain_entropy(q_bell.data(), q_bell.num_qubits());
-    double expected_bell = std::log(2.0); // ≈ 0.693147180560
-    if (std::abs(s_bell - expected_bell) > 1e-6)
-    {
-        std::fprintf(stderr, "FAIL: Bell state entropy = %.12f, expected %.12f\n",
-                     s_bell, expected_bell);
-        return 1;
-    }
-    std::printf("Entropy test 2 passed: Bell state has S=ln(2)=%.12f\n", s_bell);
-
-    // Test 3: Product state |+⟩⊗|+⟩ (N=2) has zero half-chain entropy
-    q_bell.reset_to_zero();
-    qert::apply_hadamard(q_bell.data(), q_bell.num_qubits(), 0);
-    qert::apply_hadamard(q_bell.data(), q_bell.num_qubits(), 1);
-    double s_product = qert::compute_half_chain_entropy(q_bell.data(), q_bell.num_qubits());
-    if (std::abs(s_product) > 1e-10)
-    {
-        std::fprintf(stderr, "FAIL: product state entropy = %.12f, expected 0\n", s_product);
-        return 1;
-    }
-    std::printf("Entropy test 3 passed: product state has S=0\n");
-
-    // Test 4: GHZ state (N=3, half-chain k=1) has entropy ln(2)
-    // |000⟩ + |111⟩, half-chain splits at k=1: qubit 0 in A, qubits 1,2 in B
-    qert::Statevector q_ghz(3);
-    q_ghz.reset_to_zero();
-    qert::apply_hadamard(q_ghz.data(), q_ghz.num_qubits(), 0);
-    qert::apply_cnot(q_ghz.data(), q_ghz.num_qubits(), 0, 1);
-    qert::apply_cnot(q_ghz.data(), q_ghz.num_qubits(), 0, 2);
-    double s_ghz = qert::compute_half_chain_entropy(q_ghz.data(), q_ghz.num_qubits());
-    if (std::abs(s_ghz - expected_bell) > 1e-6)
-    {
-        std::fprintf(stderr, "FAIL: GHZ entropy = %.12f, expected %.12f\n",
-                     s_ghz, expected_bell);
-        return 1;
-    }
-    std::printf("Entropy test 4 passed: GHZ state has S=ln(2)=%.12f\n", s_ghz);
-
-    // Test 5: Entropy grows with circuit depth (N=6, random brickwall)
-    qert::Statevector q_rand(6);
-    q_rand.reset_to_zero();
-
-    std::mt19937_64 rng_ent(42);
-
-    double prev_entropy = 0.0;
-    bool entropy_grew = false;
-
-    for (int layer = 0; layer < 20; ++layer)
-    {
-        if (layer % 2 == 0)
-        {
-            for (uint32_t q = 0; q < 5; q += 2)
-            {
-                auto mat = qert::generate_random_su4(rng_ent);
-                qert::apply_two_qubit_unitary(q_rand.data(), q_rand.num_qubits(),
-                                              q, q + 1, mat.data());
-            }
-        }
-        else
-        {
-            for (uint32_t q = 1; q < 5; q += 2)
-            {
-                auto mat = qert::generate_random_su4(rng_ent);
-                qert::apply_two_qubit_unitary(q_rand.data(), q_rand.num_qubits(),
-                                              q, q + 1, mat.data());
-            }
-        }
-
-        double s = qert::compute_half_chain_entropy(q_rand.data(), q_rand.num_qubits());
-
-        if (s > prev_entropy + 1e-10)
-        {
-            entropy_grew = true;
-        }
-        prev_entropy = s;
-    }
-
-    if (!entropy_grew)
-    {
-        std::fprintf(stderr, "FAIL: entropy did not grow during random circuit\n");
-        return 1;
-    }
-    std::printf("Entropy test 5 passed: entropy grows with random circuit depth\n");
-
-    // Test 6: entropy bound check
-    double max_entropy = 3.0 * std::log(2.0); // k=3, max = 3*ln(2) ≈ 2.079
-    if (prev_entropy > max_entropy + 1e-10)
-    {
-        std::fprintf(stderr, "FAIL: entropy %.12f exceeds bound %.12f\n",
-                     prev_entropy, max_entropy);
-        return 1;
-    }
-    std::printf("Entropy test 6 passed: entropy within theoretical bounds\n");
-
-    // Test 7: Bell state with explicit bipartition k=1 (N=4)
-    // Entangle qubits 0 and 1, leave 2 and 3 in |0⟩
-    // Bipartition at k=1: A={0}, B={1,2,3}
-    qert::Statevector q_bell4(4);
-    q_bell4.reset_to_zero();
-    qert::apply_hadamard(q_bell4.data(), q_bell4.num_qubits(), 0);
-    qert::apply_cnot(q_bell4.data(), q_bell4.num_qubits(), 0, 1);
-    double s_bell4_k1 = qert::compute_entropy(q_bell4.data(), q_bell4.num_qubits(), 1);
-    if (std::abs(s_bell4_k1 - expected_bell) > 1e-6)
-    {
-        std::fprintf(stderr, "FAIL: Bell N=4 k=1 entropy = %.12f, expected %.12f\n",
-                     s_bell4_k1, expected_bell);
-        return 1;
-    }
-    std::printf("Entropy test 7 passed: Bell state k=1 has S=ln(2)\n");
-
-    std::printf("Entropy tests passed.\n\n");
-
-
-    // ================================================================
-    // Circuit Tests
-    // ================================================================
-
-    // Test 1: Brickwall circuit structure (N=4, depth=4)
-    qert::Circuit circ = qert::Circuit::brickwall_1d(4, 4);
-
-    if (circ.num_qubits() != 4)
-    {
-        std::fprintf(stderr, "FAIL: circuit num_qubits\n");
-        return 1;
-    }
-    if (circ.depth() != 4)
-    {
-        std::fprintf(stderr, "FAIL: circuit depth\n");
-        return 1;
-    }
-
-    // N=4 brickwall:
-    // Layer 0 (even): pairs (0,1), (2,3) → 2 gates
-    // Layer 1 (odd):  pair (1,2)        → 1 gate
-    // Layer 2 (even): pairs (0,1), (2,3) → 2 gates
-    // Layer 3 (odd):  pair (1,2)        → 1 gate
-    // Total: 6 gates
-    if (circ.num_gates() != 6)
-    {
-        std::fprintf(stderr, "FAIL: expected 6 gates, got %u\n", circ.num_gates());
-        return 1;
-    }
-    if (circ.layer_size(0) != 2)
-    {
-        std::fprintf(stderr, "FAIL: layer 0 size\n");
-        return 1;
-    }
-    if (circ.layer_size(1) != 1)
-    {
-        std::fprintf(stderr, "FAIL: layer 1 size\n");
-        return 1;
-    }
-    std::printf("Circuit test 1 passed: brickwall structure correct\n");
-
-    // Test 2: Gate types are RANDOM_SU4
-    bool all_random = true;
-    for (uint32_t i = 0; i < circ.num_gates(); ++i)
-    {
-        if (circ.gate(i).type != qert::GateType::RANDOM_SU4)
-        {
-            all_random = false;
-            break;
-        }
-    }
-    if (!all_random)
-    {
-        std::fprintf(stderr, "FAIL: not all gates are RANDOM_SU4\n");
-        return 1;
-    }
-    std::printf("Circuit test 2 passed: all gates are RANDOM_SU4\n");
-
-    // Test 3: Qubit pairs don't overlap within a layer
-    for (uint32_t d = 0; d < circ.depth(); ++d)
-    {
-        std::vector<bool> used(4, false);
-        for (uint32_t i = 0; i < circ.num_gates(); ++i)
-        {
-            const auto &g = circ.gate(i);
-            if (g.depth != d)
-                continue;
-
-            if (used[g.control] || used[g.target])
-            {
-                std::fprintf(stderr, "FAIL: overlapping gates in layer %u\n", d);
-                return 1;
-            }
-            used[g.control] = true;
-            used[g.target] = true;
-        }
-    }
-    std::printf("Circuit test 3 passed: no overlapping qubits within layers\n");
-
-    // Test 4: Odd N brickwall (N=5, depth=3)
-    qert::Circuit circ_odd = qert::Circuit::brickwall_1d(5, 3);
-    // Layer 0: (0,1), (2,3) → qubit 4 idle
-    // Layer 1: (1,2), (3,4)
-    // Layer 2: (0,1), (2,3)
-    if (circ_odd.num_gates() != 6)
-    {
-        std::fprintf(stderr, "FAIL: odd N gate count, expected 6 got %u\n",
-                     circ_odd.num_gates());
-        return 1;
-    }
-    std::printf("Circuit test 4 passed: odd N brickwall correct\n");
-
-    // Test 5: Execute a brickwall circuit and check telemetry
-    qert::Statevector q_circ(4);
-    q_circ.reset_to_zero();
-
-    std::mt19937_64 rng_circ(99);
-    metadata = "{ \"test\": \"circuit_execution\" }";
-    qert::TelemetryRecorder rec("test_circuit_telemetry.csv", metadata);
-
+    // --- Execute circuit ---
     qert::EventID event_id = 0;
 
-    for (uint32_t i = 0; i < circ.num_gates(); ++i)
+    for (uint32_t i = 0; i < circuit.num_gates(); ++i)
     {
-        const auto &g = circ.gate(i);
+        const auto &gate = circuit.gate(i);
 
+        // --- Pre-gate telemetry ---
         qert::TelemetryEvent ev;
         ev.event_id = event_id++;
-        ev.depth = g.depth;
-        ev.gate_idx = g.gate_idx;
-        ev.execution_time_ns = 0; // placeholder
-        ev.l3_misses_delta = 0;   // placeholder
-        ev.tlb_misses_delta = 0;  // placeholder
-        ev.working_set_kb = 0;    // placeholder
-        ev.stride_entropy = 0.0;  // placeholder
+        ev.depth = gate.depth;
+        ev.gate_idx = gate.gate_idx;
 
-        // Compute entropy at even layers after all gates in that layer
-        bool is_last_gate_in_layer = (g.gate_idx == circ.layer_size(g.depth) - 1);
-        bool is_even_layer = (g.depth % 2 == 0);
+        // Hardware counters (stubbed).
+        auto hw = read_hardware_counters();
+        ev.l3_misses_delta = hw.l3_misses_delta;
+        ev.tlb_misses_delta = hw.tlb_misses_delta;
 
-        if (is_last_gate_in_layer && is_even_layer)
+        // Software-defined locality metrics (stubbed).
+        ev.working_set_kb = estimate_working_set_kb(sv.data(), sv.num_qubits());
+        ev.stride_entropy = compute_stride_entropy(
+            sv.data(), sv.num_qubits(), gate.control, gate.target);
+
+        // Timing: measure gate application.
+        auto t_start = std::chrono::high_resolution_clock::now();
+
+        // --- Apply gate ---
+        if (gate.type == qert::GateType::RANDOM_SU4)
+        {
+            auto mat = qert::generate_random_su4(rng);
+            qert::apply_two_qubit_unitary(
+                sv.data(), sv.num_qubits(),
+                gate.control, gate.target, mat.data());
+        }
+        // (Other gate types handled here when circuit supports them.)
+
+        auto t_end = std::chrono::high_resolution_clock::now();
+        ev.execution_time_ns = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                t_end - t_start)
+                .count());
+
+        // --- Entropy sampling ---
+        // Compute half-chain entropy at even layers, after the last gate
+        // in that layer, and only if the subsystem is small enough.
+        bool is_last_in_layer = (gate.gate_idx == circuit.layer_size(gate.depth) - 1);
+        bool is_even_layer = (gate.depth % 2 == 0);
+        uint32_t subsystem_k = args.num_qubits / 2;
+
+        if (is_last_in_layer && is_even_layer &&
+            subsystem_k <= qert::MAX_ENTROPY_SUBSYSTEM)
         {
             ev.half_chain_entropy = qert::compute_half_chain_entropy(
-                q_circ.data(), q_circ.num_qubits());
+                sv.data(), sv.num_qubits());
         }
         else
         {
             ev.half_chain_entropy = std::nan("");
         }
 
-        // Apply the gate
-        if (g.type == qert::GateType::RANDOM_SU4)
-        {
-            auto mat = qert::generate_random_su4(rng_circ);
-            qert::apply_two_qubit_unitary(
-                q_circ.data(), q_circ.num_qubits(),
-                g.control, g.target, mat.data());
-        }
-
-        rec.record(ev);
+        // --- Record ---
+        recorder.record(ev);
     }
 
-    rec.close();
+    // --- Finalize ---
+    recorder.close();
 
-    // Verify file exists
-    f = std::fopen("test_circuit_telemetry.csv", "r");
-    if (!f)
+    // --- Validate final state ---
+    double final_norm = sv.norm();
+    if (std::abs(final_norm - 1.0) > 1e-8)
     {
-        std::fprintf(stderr, "FAIL: circuit telemetry file not created\n");
-        return 1;
+        std::fprintf(
+            stderr,
+            "Warning: final state norm %.12f deviates from 1.0\n",
+            final_norm);
     }
-    std::fclose(f);
-    std::printf("Circuit test 5 passed: circuit execution + telemetry works\n");
 
-    std::printf("Circuit tests passed.\n\n");
+    std::printf(
+        "Run complete: %u qubits, %u depth, %u gates, %llu events\n",
+        args.num_qubits, args.depth, circuit.num_gates(),
+        static_cast<unsigned long long>(event_id));
 
-    // ================================================================
-    std::printf("All tests passed.\n");
+    std::printf("Output: %s\n", args.output_path.c_str());
+
     return 0;
 }
