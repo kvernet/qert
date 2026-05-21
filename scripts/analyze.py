@@ -5,7 +5,7 @@ Reads telemetry CSV files from a results directory, groups by experimental
 condition, and tests the primary hypothesis:
 
     Does the cache miss rate saturation depth scale with Page time,
-    and is the scaling coefficient α invariant across conditions?
+    and is the scaling coefficient alpha invariant across conditions?
 
 Phase 1: since hardware counters are stubbed (zeros), this script focuses
 on validating the analysis pipeline using entropy data and execution timing.
@@ -281,7 +281,7 @@ def test_invariant_hypothesis(
     Test the primary invariant hypothesis.
     
     For each (N, mapping) condition, fit saturation curves to entropy vs depth.
-    Then test whether D_90 scales as α * D_Page + β with α invariant across conditions.
+    Then test whether D_90 scales as alpha * D_Page + β with alpha invariant across conditions.
     
     Returns summary statistics.
     """
@@ -381,55 +381,314 @@ def print_summary(hypothesis_results: list[dict]):
             print(f"  N={n:2d}: insufficient mappings for comparison")
 
 
-def plot_results(hypothesis_results: list[dict], output_path: str | None = None):
-    """Plot entropy vs depth curves with saturation fits."""
+# ============================================================================
+# Plotting
+# ============================================================================
+
+def plot_entropy_curves(
+    hypothesis_results: list[dict],
+    output_path: str | None = None,
+):
+    """
+    Entropy growth curves for all system sizes.
+    
+    Grid layout: 2 rows x 4 columns for N=4-18 (8 panels).
+    Each panel shows mean entropy vs depth with ±1σ error bars,
+    Page time marker, and saturation fit annotation.
+    """
     if not HAS_PLT:
         print("Matplotlib not installed. Skipping plots.")
         return
-    
-    # Group by N.
+
+    # Group by N, sort.
     by_n = {}
     for r in hypothesis_results:
         n = r["num_qubits"]
         if n not in by_n:
             by_n[n] = []
         by_n[n].append(r)
-    
-    num_n = len(by_n)
-    fig, axes = plt.subplots(1, num_n, figsize=(6 * num_n, 5), squeeze=False)
-    axes = axes[0]
-    
-    for ax, (n, results) in zip(axes, sorted(by_n.items())):
-        for r in results:
-            depths = r["depths"]
-            means = r["mean_entropy_curve"]
-            stds = r["std_entropy_curve"]
-            
-            ax.errorbar(depths, means, yerr=stds,
-                       label=f"{r['mapping']} (α={r['alpha_d90']:.3f})",
-                       marker="o", capsize=3)
-        
+
+    n_list = sorted(by_n.keys())
+    num_n = len(n_list)
+
+    # Grid: 2 rows, ceil(N/2) columns.
+    ncols = (num_n + 1) // 2
+    nrows = 2 if num_n > 1 else 1
+
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=(4.5 * ncols, 4.0 * nrows),
+        squeeze=False,
+    )
+
+    # Flatten for easy iteration; hide unused subplots.
+    axes_flat = axes.flatten()
+    for idx in range(num_n, len(axes_flat)):
+        axes_flat[idx].set_visible(False)
+
+    for idx, n in enumerate(n_list):
+        ax = axes_flat[idx]
+        results = by_n[n]
+
+        # Plot one curve per mapping (they overlap perfectly, so plot
+        # only the first mapping to avoid visual clutter).
+        r = results[0]
+        depths = r["depths"]
+        means = r["mean_entropy_curve"]
+        stds = r["std_entropy_curve"]
+
+        ax.errorbar(
+            depths, means, yerr=stds,
+            marker="o", markersize=4,
+            capsize=3, linewidth=1.2,
+            color="#1f77b4", label=f"N={n}",
+        )
+
         # Page time marker.
         d_page = n / 2.0
-        ax.axvline(x=d_page, color="red", linestyle="--", alpha=0.5,
-                   label=f"Page time (N/2={d_page:.0f})")
-        
-        ax.set_xlabel("Circuit Depth")
-        ax.set_ylabel("Half-Chain Entropy (nats)")
-        ax.set_title(f"N={n}")
-        ax.legend(fontsize=8)
+        ax.axvline(
+            x=d_page, color="red", linestyle="--",
+            alpha=0.6, linewidth=1.0,
+        )
+
+        # Annotate with α value.
+        alpha_val = r["alpha_d90"]
+        ax.text(
+            0.95, 0.05,
+            fr"$\alpha$ = {alpha_val:.3f}",
+            transform=ax.transAxes,
+            fontsize=9,
+            ha="right",
+            va="bottom",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
+        )
+
+        # Theoretical maximum entropy line.
+        k = n // 2
+        s_max = k * np.log(2)
+        ax.axhline(
+            y=s_max, color="gray", linestyle=":",
+            alpha=0.5, linewidth=0.8,
+        )
+
+        ax.set_xlabel("Circuit depth", fontsize=10)
+        ax.set_ylabel("Half-chain entropy (nats)", fontsize=10)
+        ax.set_title(f"N = {n}", fontsize=11, fontweight="bold")
         ax.grid(True, alpha=0.3)
-    
-    plt.suptitle("Entanglement Entropy Growth in 1D Brickwall Circuits",
-                 fontsize=14, y=1.02)
-    plt.tight_layout()
-    
+        ax.set_xlim(left=0)
+
+    # Shared legend below the plots.
+    num_seeds = hypothesis_results[0]["num_seeds"]
+    fig.text(
+        0.5, 0.01,
+        f"Solid line: mean entropy across {num_seeds} instances. "
+        r"Error bars: $\pm 1\alpha$. "
+        "Red dashed: Page time (N/2). "
+        "Gray dotted: maximal entropy k·ln(2).",
+        ha="center", fontsize=9, fontstyle="italic",
+    )
+
+    fig.suptitle(
+        "Entanglement entropy growth in 1D Brickwall circuits",
+        fontsize=14, fontweight="bold", y=1.01,
+    )
+    plt.tight_layout(rect=[0, 0.04, 1, 0.96])
+
     if output_path:
-        plt.savefig(output_path, dpi=150, bbox_inches="tight")
-        print(f"Plot saved to {output_path}")
+        plt.savefig(output_path, dpi=200, bbox_inches="tight")
+        print(f"Entropy curves saved to {output_path}")
     else:
         plt.show()
+    plt.close(fig)
 
+
+def plot_alpha_summary(
+    hypothesis_results: list[dict],
+    output_path: str | None = None,
+):
+    """
+    Scaling coefficient alpha vs system size N.
+    
+    Single panel showing alpha = D_90 / (N/2) for each N.
+    Horizontal line at alpha = 1.0 (Page prediction).
+    Horizontal band for the measured mean alpha.
+    """
+    if not HAS_PLT:
+        print("Matplotlib not installed. Skipping plots.")
+        return
+
+    # Extract one row per N (all mappings identical, so take first).
+    by_n = {}
+    for r in hypothesis_results:
+        n = r["num_qubits"]
+        if n not in by_n:
+            by_n[n] = r["alpha_d90"]
+
+    n_list = sorted(by_n.keys())
+    alphas = [by_n[n] for n in n_list]
+
+    mean_alpha = np.mean(alphas)
+    std_alpha = np.std(alphas)
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+
+    # α values.
+    ax.plot(
+        n_list, alphas,
+        marker="o", markersize=8,
+        linewidth=1.5, color="#1f77b4",
+        label=fr"Measured $\alpha$ (mean = {mean_alpha:.3f} ± {std_alpha:.3f})",
+    )
+
+    # Page prediction α = 1.0.
+    ax.axhline(
+        y=1.0, color="red", linestyle="--",
+        linewidth=1.2, alpha=0.7,
+        label=r"Page prediction ($\alpha$ = 1.0)",
+    )
+
+    # Mean α band.
+    ax.axhspan(
+        mean_alpha - std_alpha, mean_alpha + std_alpha,
+        alpha=0.12, color="#1f77b4",
+        label=fr"Mean $\alpha$ band ($\pm 1\alpha$)",
+    )
+
+    ax.set_xlabel("System size", fontsize=12)
+    ax.set_ylabel(r"Scaling coefficient $\alpha$ = D$_{90}$ / (N/2)", fontsize=12)
+    ax.set_title(
+        "Entanglement saturation scaling coefficient",
+        fontsize=13, fontweight="bold",
+    )
+    ax.legend(fontsize=10, loc="lower right")
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(n_list[0] - 0.5, n_list[-1] + 0.5)
+    ax.set_ylim(0.8, 2.2)
+
+    # Annotate key finding.
+    ax.text(
+        0.98, 0.95,
+        f"Saturation occurs at\n{mean_alpha:.2f} x the Page time\n"
+        f"across N = {n_list[0]} - {n_list[-1]}",
+        transform=ax.transAxes,
+        fontsize=10,
+        ha="right",
+        va="top",
+        bbox=dict(boxstyle="round,pad=0.4", facecolor="lightyellow", alpha=0.9),
+    )
+
+    plt.tight_layout()
+
+    if output_path:
+        plt.savefig(output_path, dpi=200, bbox_inches="tight")
+        print(f"Alpha summary saved to {output_path}")
+    else:
+        plt.show()
+    plt.close(fig)
+
+
+def plot_execution_time(
+    runs: list[dict],
+    output_path: str | None = None,
+):
+    """
+    Mean per-gate execution time vs circuit depth.
+    
+    Extracts timing data directly from telemetry CSVs (not from
+    hypothesis results, which aggregate only entropy).
+    """
+    if not HAS_PLT:
+        print("Matplotlib not installed. Skipping plots.")
+        return
+
+    # Aggregate execution time by (N, depth) across all runs.
+    timing = {}  # key: (N, depth) -> list of mean times
+
+    for run in runs:
+        n = run["metadata"]["num_qubits"]
+        if n not in [4, 8, 12, 16]:  # Subset for readability
+            continue
+
+        data = run["data"]
+        for row in data:
+            depth = int(row["depth"])
+            t = row["execution_time_ns"]
+            key = (n, depth)
+            if key not in timing:
+                timing[key] = []
+            timing[key].append(t)
+
+    # Compute mean per (N, depth).
+    summary = {}
+    for (n, depth), times in timing.items():
+        arr = np.array(times)
+        summary[(n, depth)] = {
+            "mean_ns": np.mean(arr),
+            "std_ns": np.std(arr),
+        }
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+
+    colors = {4: "#1f77b4", 8: "#ff7f0e", 12: "#2ca02c", 16: "#d62728"}
+
+    for n in [4, 8, 12, 16]:
+        depths = sorted([d for (nn, d) in summary if nn == n])
+        means = [summary[(n, d)]["mean_ns"] / 1000.0 for d in depths]  # ns -> µs
+        stds = [summary[(n, d)]["std_ns"] / 1000.0 for d in depths]
+
+        ax.errorbar(
+            depths, means, yerr=stds,
+            marker="o", markersize=5,
+            capsize=3, linewidth=1.2,
+            color=colors[n],
+            label=f"N={n}",
+        )
+
+    ax.set_xlabel("Circuit depth", fontsize=12)
+    ax.set_ylabel("Per-gate execution time (µs)", fontsize=12)
+    ax.set_title(
+        "Gate execution time vs. circuit depth",
+        fontsize=13, fontweight="bold",
+    )
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(left=0)
+
+    # Annotate: timing is constant across depth.
+    #ax.text(
+    #    0.98, 0.95,
+    #    "Execution time is approximately\n"
+    #    "constant across circuit depth\n"
+    #    "for each N (statevector fits in cache).",
+    #    transform=ax.transAxes,
+    #    fontsize=9,
+    #    ha="right",
+    #    va="top",
+    #    bbox=dict(boxstyle="round,pad=0.4", facecolor="lightyellow", alpha=0.9),
+    #)
+
+    plt.tight_layout()
+
+    if output_path:
+        plt.savefig(output_path, dpi=200, bbox_inches="tight")
+        print(f"Execution time saved to {output_path}")
+    else:
+        plt.show()
+    plt.close(fig)
+
+
+def plot_all(
+    hypothesis_results: list[dict],
+    runs: list[dict],
+    output_dir: str | None = None,
+):
+    """Generate all three figures."""
+    if not output_dir:
+        return
+    
+    plot_entropy_curves(hypothesis_results, output_dir + "/entropy.pdf")
+    plot_alpha_summary(hypothesis_results, output_dir + "/alpha.pdf")
+    plot_execution_time(runs, output_dir + "/timing.pdf")
 
 # ============================================================================
 # Main
@@ -442,7 +701,7 @@ def parse_args():
     parser.add_argument("--plot", action="store_true",
                         help="Show plots (requires matplotlib)")
     parser.add_argument("--output", type=str, default=None,
-                        help="Save plot to file (e.g., report.png)")
+                        help="Output dir to save plots (e.g., results/figures)")
     parser.add_argument("--json", type=str, default=None,
                         help="Export analysis results to JSON")
     return parser.parse_args()
@@ -482,7 +741,9 @@ def main():
     
     # Plot if requested.
     if args.plot or args.output:
-        plot_results(results, output_path=args.output)
+        path = Path(args.output)
+        path.mkdir(parents=True, exist_ok=True)
+        plot_all(results, runs, args.output)
 
 
 if __name__ == "__main__":

@@ -29,7 +29,7 @@ namespace qert
 
     // --- Telemetry recorder ---
     // Collects per-gate events and writes them to a CSV file matching
-    // the telemetry schema (telemetry_schema/v1.0.0.json).
+    // the telemetry schema in telemetry_schema/.
     //
     // Usage:
     //   TelemetryRecorder recorder("output.csv", metadata_json_string);

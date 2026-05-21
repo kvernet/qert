@@ -1,0 +1,72 @@
+{
+    "schema_version": "0.1.0",
+    "experiment_metadata": {
+        "circuit_family": "brickwall_1d",
+        "circuit_depth_total": 96,
+        "num_qubits": 24,
+        "qubit_mapping": "lexicographic",
+        "rng_seed": 12345,
+        "git_commit": "...",
+        "compiler": "gcc-13.2.0",
+        "compiler_flags": "-O2 -march=native",
+        "cpu_arch": "x86_64",
+        "cpu_model": "Intel(R) Core(TM) i7-13700K"
+    },
+    "telemetry_columns": [
+        {
+            "name": "event_id",
+            "type": "uint64",
+            "unit": "count",
+            "description": "Monotonically increasing event counter, one per gate application"
+        },
+        {
+            "name": "depth",
+            "type": "uint32",
+            "unit": "circuit layer index",
+            "description": "Current circuit depth (layer number) of this gate"
+        },
+        {
+            "name": "gate_idx",
+            "type": "uint32",
+            "unit": "index within layer",
+            "description": "Zero-based index of this gate within the current layer"
+        },
+        {
+            "name": "execution_time_ns",
+            "type": "uint64",
+            "unit": "nanoseconds",
+            "description": "Wall-clock time to apply this gate, including any implicit telemetry overhead"
+        },
+        {
+            "name": "l3_misses_delta",
+            "type": "uint64",
+            "unit": "count",
+            "description": "L3 cache misses since previous event, measured via PAPI"
+        },
+        {
+            "name": "tlb_misses_delta",
+            "type": "uint64",
+            "unit": "count",
+            "description": "Data TLB misses since previous event, measured via PAPI"
+        },
+        {
+            "name": "working_set_kb",
+            "type": "uint64",
+            "unit": "KB",
+            "description": "Unique 4KB pages accessed since circuit start, via address trace sampling"
+        },
+        {
+            "name": "stride_entropy",
+            "type": "float64",
+            "unit": "bits",
+            "description": "Shannon entropy of memory stride distribution over last 128 gate accesses"
+        },
+        {
+            "name": "half_chain_entropy",
+            "type": "float64",
+            "unit": "nats",
+            "nullable": true,
+            "description": "Von Neumann entropy of half-chain reduced density matrix. Computed at even layers only; null for odd layers and all non-bipartition events."
+        }
+    ]
+}
