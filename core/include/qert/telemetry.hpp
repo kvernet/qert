@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.hpp"
+#include "hardware.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -41,19 +42,12 @@ struct TelemetryEvent
 class TelemetryRecorder
 {
   public:
-    // Opens the output file and writes the metadata header.
-    // metadata_json is the serialized RunMetadata::to_json() string.
     TelemetryRecorder(const std::string &output_path, const std::string &metadata_json);
-
     ~TelemetryRecorder();
 
-    // Record a single gate event. Thread-safe for single-threaded use only.
     void record(const TelemetryEvent &event);
-
-    // Flush and close the output file.
     void close();
 
-    // Number of events recorded so far.
     uint64_t event_count() const
     {
         return event_count_;
@@ -65,5 +59,13 @@ class TelemetryRecorder
     uint64_t event_count_;
     bool closed_;
 };
+
+// --- Software-Defined Locality Metrics ---
+
+// Estimate working set size in KB.
+uint64_t estimate_working_set_kb(const Complex *sv, uint32_t num_qubits);
+
+// Compute memory stride entropy for a two-qubit gate.
+double compute_stride_entropy(const Complex *sv, uint32_t num_qubits, Qubit control, Qubit target);
 
 } // namespace qert

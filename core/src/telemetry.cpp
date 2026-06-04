@@ -97,4 +97,25 @@ void TelemetryRecorder::close()
     }
 }
 
+// ============================================================================
+// Software-Defined Locality Metrics (Phase 1 stubs)
+// ============================================================================
+
+uint64_t estimate_working_set_kb(const Complex * /*sv*/, uint32_t num_qubits)
+{
+    // Stub: returns total statevector size.
+    // Phase 2: track actual 4KB pages touched via mincore or address tracing.
+    uint64_t bytes = (1ULL << num_qubits) * sizeof(Complex);
+    return bytes / 1024;
+}
+
+double compute_stride_entropy(const Complex * /*sv*/, uint32_t /*num_qubits*/, Qubit /*control*/,
+                              Qubit /*target*/
+)
+{
+    // Stub: returns zero.
+    // Phase 2: compute Shannon entropy of memory stride distribution.
+    return 0.0;
+}
+
 } // namespace qert

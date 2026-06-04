@@ -12,6 +12,7 @@
 #include "qert/common.hpp"
 #include "qert/entropy.hpp"
 #include "qert/gates.hpp"
+#include "qert/hardware.hpp"
 #include "qert/seed.hpp"
 #include "qert/statevector.hpp"
 #include "qert/telemetry.hpp"
@@ -195,41 +196,6 @@ uint64_t get_current_unix_ns()
     return static_cast<uint64_t>(ns);
 }
 
-// --- Telemetry stubs (real implementation when PAPI is wired) ---
-
-#ifdef QERT_HAS_PAPI
-// Real PAPI counters will go here in Phase 2.
-#error "PAPI integration not yet implemented"
-#endif
-
-struct HardwareCounters
-{
-    uint64_t l3_misses_delta = 0;
-    uint64_t tlb_misses_delta = 0;
-};
-
-HardwareCounters read_hardware_counters()
-{
-    // Stub: returns zeros until PAPI is integrated.
-    return {};
-}
-
-uint64_t estimate_working_set_kb(const qert::Complex * /*sv*/, uint32_t num_qubits)
-{
-    // Stub: rough estimate based on statevector size.
-    // Real implementation will use page-fault counting or address tracing.
-    // For now: 2^N amplitudes * 16 bytes per amplitude / 1024 bytes per KB.
-    uint64_t bytes = (1ULL << num_qubits) * sizeof(qert::Complex);
-    return bytes / 1024;
-}
-
-double compute_stride_entropy(const qert::Complex * /*sv*/, uint32_t /*num_qubits*/,
-                              qert::Qubit /*control*/, qert::Qubit /*target*/)
-{
-    // Stub: returns placeholder until address tracing is implemented.
-    return 0.0;
-}
-
 } // anonymous namespace
 
 // ============================================================================
@@ -244,6 +210,9 @@ int main(int argc, char **argv)
     {
         return 1;
     }
+
+    // --- Initialize hardware counters ---
+    qert::HardwareProfiler profiler;
 
     // --- Initialize RNG ---
     qert::set_rng_seed(args.seed);
@@ -287,15 +256,13 @@ int main(int argc, char **argv)
         ev.depth = gate.depth;
         ev.gate_idx = gate.gate_idx;
 
-        // Hardware counters (stubbed).
-        auto hw = read_hardware_counters();
-        ev.l3_misses_delta = hw.l3_misses_delta;
-        ev.tlb_misses_delta = hw.tlb_misses_delta;
-
-        // Software-defined locality metrics (stubbed).
-        ev.working_set_kb = estimate_working_set_kb(sv.data(), sv.num_qubits());
+        // Software-defined locality metrics.
+        ev.working_set_kb = qert::estimate_working_set_kb(sv.data(), sv.num_qubits());
         ev.stride_entropy =
-            compute_stride_entropy(sv.data(), sv.num_qubits(), gate.control, gate.target);
+            qert::compute_stride_entropy(sv.data(), sv.num_qubits(), gate.control, gate.target);
+
+        // Hardware counters.
+        auto start_hw = profiler.read();
 
         // Timing: measure gate application.
         auto t_start = std::chrono::high_resolution_clock::now();
@@ -312,6 +279,11 @@ int main(int argc, char **argv)
         auto t_end = std::chrono::high_resolution_clock::now();
         ev.execution_time_ns = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(t_end - t_start).count());
+
+        // Hardware counters: read after gate, compute delta.
+        auto end_hw = profiler.read();
+        ev.l3_misses_delta = end_hw.l3_misses - start_hw.l3_misses;
+        ev.tlb_misses_delta = end_hw.tlb_misses - start_hw.tlb_misses;
 
         // --- Entropy sampling ---
         // Compute half-chain entropy at even layers, after the last gate

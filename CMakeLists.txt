@@ -54,6 +54,7 @@ add_library(qert_core STATIC
     core/src/seed.cpp
     core/src/statevector.cpp
     core/src/gates.cpp
+    core/src/hardware.cpp
     core/src/telemetry.cpp
     core/src/entropy.cpp
     core/src/circuit.cpp
@@ -90,13 +91,28 @@ target_link_libraries(qert PRIVATE qert_core)
 
 # --- Optional: PAPI (for hardware performance counters) ---
 if(ENABLE_PAPI)
-    find_library(PAPI_LIBRARY papi)
-    if(PAPI_LIBRARY)
+    if(DEFINED PAPI_ROOT)
+        find_library(PAPI_LIBRARY papi
+            PATHS ${PAPI_ROOT}/lib
+            NO_DEFAULT_PATH
+        )
+        find_path(PAPI_INCLUDE_DIR papi.h
+            PATHS ${PAPI_ROOT}/include
+            NO_DEFAULT_PATH
+        )
+    else()
+        find_library(PAPI_LIBRARY papi)
+        find_path(PAPI_INCLUDE_DIR papi.h)
+    endif()
+
+    if(PAPI_LIBRARY AND PAPI_INCLUDE_DIR)
         target_link_libraries(qert_core PUBLIC ${PAPI_LIBRARY})
+        target_include_directories(qert_core PUBLIC ${PAPI_INCLUDE_DIR})
         target_compile_definitions(qert_core PUBLIC QERT_HAS_PAPI)
         message(STATUS "PAPI enabled: ${PAPI_LIBRARY}")
     else()
-        message(FATAL_ERROR "PAPI requested but not found")
+        message(FATAL_ERROR "PAPI requested but not found. "
+                            "Install libpapi-dev or set -DPAPI_ROOT=/path/to/papi-install")
     endif()
 endif()
 
