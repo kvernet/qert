@@ -1,12 +1,13 @@
+#include "qert/circuit.hpp"
+#include "qert/entropy.hpp"
+#include "qert/gates.hpp"
+#include "qert/statevector.hpp"
+#include "qert/telemetry.hpp"
+
 #include <catch_amalgamated.hpp>
-#include "circuit.hpp"
-#include "gates.hpp"
-#include "statevector.hpp"
-#include "telemetry.hpp"
-#include "entropy.hpp"
-#include <random>
-#include <fstream>
 #include <cmath>
+#include <fstream>
+#include <random>
 
 TEST_CASE("Full circuit execution + telemetry", "[integration]")
 {
@@ -37,8 +38,7 @@ TEST_CASE("Full circuit execution + telemetry", "[integration]")
 
         if (is_last && is_even)
         {
-            ev.half_chain_entropy = qert::compute_half_chain_entropy(
-                sv.data(), sv.num_qubits());
+            ev.half_chain_entropy = qert::compute_half_chain_entropy(sv.data(), sv.num_qubits());
         }
         else
         {
@@ -46,8 +46,7 @@ TEST_CASE("Full circuit execution + telemetry", "[integration]")
         }
 
         auto mat = qert::generate_random_su4(rng);
-        qert::apply_two_qubit_unitary(sv.data(), sv.num_qubits(),
-                                      g.control, g.target, mat.data());
+        qert::apply_two_qubit_unitary(sv.data(), sv.num_qubits(), g.control, g.target, mat.data());
 
         rec.record(ev);
     }
@@ -87,8 +86,7 @@ TEST_CASE("Norm preserved through brickwall circuit", "[integration]")
     {
         const auto &g = circ.gate(i);
         auto mat = qert::generate_random_su4(rng);
-        qert::apply_two_qubit_unitary(sv.data(), sv.num_qubits(),
-                                      g.control, g.target, mat.data());
+        qert::apply_two_qubit_unitary(sv.data(), sv.num_qubits(), g.control, g.target, mat.data());
     }
 
     REQUIRE(std::abs(sv.norm() - initial_norm) < 1e-10);
@@ -109,8 +107,7 @@ TEST_CASE("Entropy grows and saturates in brickwall", "[integration]")
         const auto &g = circ.gate(i);
 
         auto mat = qert::generate_random_su4(rng);
-        qert::apply_two_qubit_unitary(sv.data(), sv.num_qubits(),
-                                      g.control, g.target, mat.data());
+        qert::apply_two_qubit_unitary(sv.data(), sv.num_qubits(), g.control, g.target, mat.data());
 
         bool is_last = (g.gate_idx == circ.layer_size(g.depth) - 1);
         bool is_even = (g.depth % 2 == 0);

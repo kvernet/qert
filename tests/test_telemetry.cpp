@@ -1,7 +1,8 @@
+#include "qert/telemetry.hpp"
+
 #include <catch_amalgamated.hpp>
-#include "telemetry.hpp"
-#include <fstream>
 #include <cmath>
+#include <fstream>
 
 TEST_CASE("TelemetryRecorder creates file with metadata", "[telemetry]")
 {

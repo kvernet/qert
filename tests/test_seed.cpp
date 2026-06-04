@@ -1,6 +1,7 @@
-#include <catch_amalgamated.hpp>
-#include "seed.hpp"
+#include "qert/seed.hpp"
+
 #include <build_info.hpp>
+#include <catch_amalgamated.hpp>
 
 #include <fstream>
 
@@ -19,9 +20,8 @@ TEST_CASE("Global RNG seed", "[seed]")
 
 TEST_CASE("RunMetadata construction", "[seed]")
 {
-    qert::RunMetadata meta(
-        "brickwall_1d", 16, 48, "lexicographic", 42,
-        "abc1234", "gcc-13", "-O2", "x86_64", "test-cpu", 0);
+    qert::RunMetadata meta("brickwall_1d", 16, 48, "lexicographic", 42, "abc1234", "gcc-13", "-O2",
+                           "x86_64", "test-cpu", 0);
 
     REQUIRE(meta.circuit_family == "brickwall_1d");
     REQUIRE(meta.num_qubits == 16);
@@ -59,10 +59,10 @@ TEST_CASE("RunMetadata validation", "[seed]")
 
 TEST_CASE("Physics hash stability", "[seed]")
 {
-    qert::RunMetadata meta1("brickwall_1d", 16, 48, "lexicographic", 42,
-                            "abc", "gcc", "-O2", "x86_64", "cpu", 0);
-    qert::RunMetadata meta2("brickwall_1d", 16, 48, "lexicographic", 42,
-                            "def", "clang", "-O3", "arm", "other-cpu", 999);
+    qert::RunMetadata meta1("brickwall_1d", 16, 48, "lexicographic", 42, "abc", "gcc", "-O2",
+                            "x86_64", "cpu", 0);
+    qert::RunMetadata meta2("brickwall_1d", 16, 48, "lexicographic", 42, "def", "clang", "-O3",
+                            "arm", "other-cpu", 999);
 
     // Same physics → same physics_hash regardless of environment
     REQUIRE(meta1.physics_hash == meta2.physics_hash);
@@ -76,8 +76,8 @@ TEST_CASE("Physics hash stability", "[seed]")
 
 TEST_CASE("RunMetadata JSON serialization", "[seed]")
 {
-    qert::RunMetadata meta("brickwall_1d", 16, 48, "lexicographic", 42,
-                           "abc", "gcc", "-O2", "x86_64", "cpu", 0);
+    qert::RunMetadata meta("brickwall_1d", 16, 48, "lexicographic", 42, "abc", "gcc", "-O2",
+                           "x86_64", "cpu", 0);
 
     std::string json = meta.to_json();
 
@@ -90,15 +90,13 @@ TEST_CASE("RunMetadata JSON serialization", "[seed]")
 
 TEST_CASE("RunMetadata file I/O", "[seed]")
 {
-    qert::RunMetadata meta("test", 4, 10, "gray", 12345,
-                           "abc", "gcc", "-O2", "x86_64", "cpu", 0);
+    qert::RunMetadata meta("test", 4, 10, "gray", 12345, "abc", "gcc", "-O2", "x86_64", "cpu", 0);
 
     meta.write_to_file("test_meta.json");
 
     std::ifstream f("test_meta.json");
     REQUIRE(f.good());
 
-    std::string content((std::istreambuf_iterator<char>(f)),
-                        std::istreambuf_iterator<char>());
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     REQUIRE(content.find("\"circuit_family\": \"test\"") != std::string::npos);
 }

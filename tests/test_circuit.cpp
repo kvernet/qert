@@ -1,5 +1,6 @@
+#include "qert/circuit.hpp"
+
 #include <catch_amalgamated.hpp>
-#include "circuit.hpp"
 
 TEST_CASE("Brickwall circuit structure N=4", "[circuit]")
 {

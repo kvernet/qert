@@ -1,7 +1,8 @@
+#include "qert/entropy.hpp"
+#include "qert/gates.hpp"
+#include "qert/statevector.hpp"
+
 #include <catch_amalgamated.hpp>
-#include "entropy.hpp"
-#include "gates.hpp"
-#include "statevector.hpp"
 
 TEST_CASE("Zero entropy for |0...0⟩", "[entropy]")
 {

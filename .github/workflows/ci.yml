@@ -1,0 +1,246 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'release/**'
+      - 'ci-test-*'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BUILD_DIR: build
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+
+jobs:
+
+  # ============================================================================
+  # Formatting Check
+  # ============================================================================
+  clang-format:
+    name: Format (clang-format)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -qq clang-format-18
+
+      - name: Check formatting
+        run: |
+          find . -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' \) \
+            ! -path './tests/catch_amalgamated.*' \
+            ! -path './build/*' \
+            -print0 | xargs -0 clang-format-18 --dry-run --Werror
+
+  # ============================================================================
+  # Static Analysis
+  # ============================================================================
+  clang-tidy:
+    name: Lint (clang-tidy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -qq clang-tidy-18 ninja-build
+
+      - name: Configure
+        run: |
+          cmake \
+            -B ${{ env.BUILD_DIR }} \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTING=ON
+
+      - name: Run clang-tidy
+        run: |
+          find core/src app -name '*.cpp' -print0 | while IFS= read -r -d '' file; do
+            clang-tidy-18 -p=${{ env.BUILD_DIR }} "$file" \
+              --header-filter='core/include/.*\.hpp$' \
+              --warnings-as-errors='*'
+          done
+
+          find tests -name 'test_*.cpp' -print0 | while IFS= read -r -d '' file; do
+            clang-tidy-18 -p=${{ env.BUILD_DIR }} "$file" \
+              --header-filter='core/include/.*\.hpp$' \
+              --warnings-as-errors='*'
+          done
+
+  # ============================================================================
+  # Build and Test Matrix
+  # ============================================================================
+  build-and-test:
+    name: ${{ matrix.os }} | ${{ matrix.compiler }} | ${{ matrix.build_type }}${{ matrix.sanitizers && ' +San' || '' }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+
+          # --- Ubuntu | GCC ---
+          - os: ubuntu-latest
+            compiler: gcc
+            cc: gcc
+            cxx: g++
+            build_type: Debug
+            sanitizers: true
+
+          - os: ubuntu-latest
+            compiler: gcc
+            cc: gcc
+            cxx: g++
+            build_type: Release
+
+          # --- Ubuntu | Clang ---
+          - os: ubuntu-latest
+            compiler: clang
+            cc: clang
+            cxx: clang++
+            build_type: Debug
+            sanitizers: true
+
+          - os: ubuntu-latest
+            compiler: clang
+            cc: clang
+            cxx: clang++
+            build_type: Release
+
+          # --- macOS | Clang ---
+          - os: macos-latest
+            compiler: clang
+            cc: clang
+            cxx: clang++
+            build_type: Release
+
+          # --- Windows | MSVC ---
+          - os: windows-latest
+            compiler: msvc
+            build_type: Release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Ninja
+        if: matrix.compiler != 'msvc'
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Configure
+        shell: bash
+        run: |
+          GENERATOR=""
+          if [ "${{ matrix.compiler }}" = "msvc" ]; then
+            GENERATOR=""
+          else
+            export CC=${{ matrix.cc }}
+            export CXX=${{ matrix.cxx }}
+            GENERATOR="-G Ninja"
+          fi
+
+          SANITIZER_FLAG=""
+          if [ "${{ matrix.sanitizers }}" = "true" ]; then
+            SANITIZER_FLAG="-DENABLE_SANITIZERS=ON"
+          fi
+
+          cmake \
+            -B ${{ env.BUILD_DIR }} \
+            $GENERATOR \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DBUILD_TESTING=ON \
+            $SANITIZER_FLAG
+
+      - name: Build
+        run: cmake --build ${{ env.BUILD_DIR }} --config ${{ matrix.build_type }}
+
+      - name: Test
+        run: |
+          if [ "${{ matrix.compiler }}" = "msvc" ]; then
+            ctest --test-dir ${{ env.BUILD_DIR }} --output-on-failure -C ${{ matrix.build_type }}
+          else
+            ctest --test-dir ${{ env.BUILD_DIR }} --output-on-failure
+          fi
+        shell: bash
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.build_type }}${{ matrix.sanitizers && '-san' || '' }}
+          path: |
+            ${{ env.BUILD_DIR }}/qert
+            ${{ env.BUILD_DIR }}/qert.exe
+            ${{ env.BUILD_DIR }}/qert_tests
+            ${{ env.BUILD_DIR }}/qert_tests.exe
+          if-no-files-found: ignore
+
+  # ============================================================================
+  # Code Coverage (Linux + GCC Debug only)
+  # ============================================================================
+  coverage:
+    name: Coverage (gcov)
+    runs-on: ubuntu-latest
+    needs: [clang-format, clang-tidy]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -qq lcov
+
+      - name: Configure
+        run: |
+          cmake \
+            -B ${{ env.BUILD_DIR }} \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=ON \
+            -DCMAKE_CXX_FLAGS="-g -O0 --coverage" \
+            -DCMAKE_EXE_LINKER_FLAGS="--coverage"
+
+      - name: Build
+        run: cmake --build ${{ env.BUILD_DIR }}
+
+      - name: Test
+        run: |
+          if [ "${{ matrix.compiler }}" = "msvc" ]; then
+            ctest --test-dir ${{ env.BUILD_DIR }} --output-on-failure -C ${{ matrix.build_type }}
+          else
+            ctest --test-dir ${{ env.BUILD_DIR }} --output-on-failure
+          fi
+        shell: bash
+
+      - name: Collect coverage
+        run: |
+          lcov --capture \
+            --directory ${{ env.BUILD_DIR }} \
+            --output-file coverage.info \
+            --ignore-errors unused,empty,gcov,source \
+            --rc lcov_branch_coverage=0
+          lcov --extract coverage.info \
+            "$(pwd)/core/src/*.cpp" \
+            --output-file coverage_filtered.info \
+            --ignore-errors empty
+
+      - name: Coverage summary
+        run: lcov --list coverage_filtered.info --ignore-errors empty
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage_filtered.info

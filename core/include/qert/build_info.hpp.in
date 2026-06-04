@@ -1,0 +1,11 @@
+#pragma once
+
+namespace qert
+{
+
+constexpr const char *GIT_COMMIT = "@GIT_COMMIT@";
+constexpr const char *COMPILER_ID = "@QERT_COMPILER@";
+constexpr const char *COMPILER_VERSION = "@QERT_COMPILER_VERSION@";
+constexpr const char *COMPILER_FLAGS_DEFAULT = "@QERT_COMPILER_FLAGS@";
+
+} // namespace qert

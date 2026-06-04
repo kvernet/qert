@@ -1,11 +1,12 @@
 cmake_minimum_required(VERSION 3.16)
-project(qert VERSION 0.1.0 LANGUAGES CXX)
+project(qert VERSION 0.2.0 LANGUAGES CXX)
 
 # --- Options ---
-option(BUILD_TESTS "Build the test suite" OFF)
+option(BUILD_TESTING "Build the test suite" OFF)
 option(BUILD_BENCHMARKS "Build benchmarks" OFF)
 option(ENABLE_PAPI "Enable hardware performance counters via PAPI" OFF)
 option(ENABLE_OPENMP "Enable OpenMP parallelism" OFF)
+option(ENABLE_SANITIZERS "Enable ASan and UBSan" OFF)
 
 # --- C++ Standard ---
 set(CMAKE_CXX_STANDARD 17)
@@ -17,7 +18,6 @@ set(QERT_WARNING_FLAGS "")
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set(QERT_WARNING_FLAGS
-        -O2
         -Wall
         -Wextra
         -Wpedantic
@@ -45,45 +45,45 @@ string(JOIN " " QERT_COMPILER_FLAGS ${QERT_WARNING_FLAGS})
 
 # --- Build Info Header (generated) ---
 configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/build_info.hpp.in
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/include/qert/build_info.hpp.in
     ${CMAKE_CURRENT_BINARY_DIR}/generated/build_info.hpp
 )
 
 # --- Core Library ---
 add_library(qert_core STATIC
-    src/common.hpp
-    src/seed.hpp
-    src/seed.cpp
-    src/statevector.hpp
-    src/statevector.cpp
-    src/gates.hpp
-    src/gates.cpp
-    src/telemetry.hpp
-    src/telemetry.cpp
-    src/entropy.hpp
-    src/entropy.cpp
-    src/circuit.hpp
-    src/circuit.cpp
+    core/src/seed.cpp
+    core/src/statevector.cpp
+    core/src/gates.cpp
+    core/src/telemetry.cpp
+    core/src/entropy.cpp
+    core/src/circuit.cpp
 )
 
 target_include_directories(qert_core PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/include
     ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
 
-# Apply warning flags to target
+# Apply warning flags to core library
 target_compile_options(qert_core PRIVATE
     ${QERT_WARNING_FLAGS}
 )
 
-# --- Debug Build: enable assertions and debug telemetry ---
+# --- Debug Build: enable assertions ---
 target_compile_definitions(qert_core PRIVATE
     $<$<CONFIG:Debug>:QERT_DEBUG>
 )
 
+# --- Sanitizers ---
+if(ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(qert_core PRIVATE -fsanitize=address,undefined)
+    target_link_options(qert_core PUBLIC -fsanitize=address,undefined)
+    message(STATUS "Sanitizers enabled: address, undefined")
+endif()
+
 # --- Main Executable ---
 add_executable(qert
-    src/main.cpp
+    app/main.cpp
 )
 
 target_link_libraries(qert PRIVATE qert_core)
@@ -100,7 +100,7 @@ if(ENABLE_PAPI)
     endif()
 endif()
 
-# --- Optional: OpenMP (for parallel gate application, Phase 2) ---
+# --- Optional: OpenMP (for parallel gate application) ---
 if(ENABLE_OPENMP)
     find_package(OpenMP)
     if(OpenMP_CXX_FOUND)
@@ -113,7 +113,7 @@ if(ENABLE_OPENMP)
 endif()
 
 # --- Tests ---
-if(BUILD_TESTS)
+if(BUILD_TESTING)
     enable_testing()
 
     # Download Catch2 v3 amalgamated files if not present
@@ -156,8 +156,13 @@ if(BUILD_TESTS)
         ${QERT_WARNING_FLAGS}
     )
 
+    if(ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(qert_tests PRIVATE -fsanitize=address,undefined)
+        target_link_options(qert_tests PUBLIC -fsanitize=address,undefined)
+    endif()
+
     add_test(NAME qert_tests COMMAND qert_tests)
-    
+
     message(STATUS "Tests enabled")
 endif()
 

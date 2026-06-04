@@ -1,6 +1,7 @@
+#include "qert/gates.hpp"
+#include "qert/statevector.hpp"
+
 #include <catch_amalgamated.hpp>
-#include "gates.hpp"
-#include "statevector.hpp"
 #include <random>
 
 TEST_CASE("Hadamard gate", "[gates]")
@@ -126,8 +127,8 @@ TEST_CASE("SU(4) unitarity", "[gates]")
                 {
                     dot += std::conj(mat[k * 4 + r]) * mat[k * 4 + c];
                 }
-                qert::Complex expected = (r == c) ? qert::Complex{1.0, 0.0}
-                                                  : qert::Complex{0.0, 0.0};
+                qert::Complex expected =
+                    (r == c) ? qert::Complex{1.0, 0.0} : qert::Complex{0.0, 0.0};
                 REQUIRE(std::abs(dot - expected) < 1e-10);
             }
         }
@@ -155,12 +156,10 @@ TEST_CASE("Arbitrary single-qubit unitary", "[gates]")
     qert::Statevector sv(1);
 
     // Apply identity
-    qert::apply_single_qubit_unitary(sv.data(), sv.num_qubits(), 0,
-                                     {1, 0}, {0, 0}, {0, 0}, {1, 0});
+    qert::apply_single_qubit_unitary(sv.data(), sv.num_qubits(), 0, {1, 0}, {0, 0}, {0, 0}, {1, 0});
     REQUIRE(std::abs(sv.amplitude(0) - qert::Complex{1.0, 0.0}) < 1e-12);
 
     // Apply X via unitary
-    qert::apply_single_qubit_unitary(sv.data(), sv.num_qubits(), 0,
-                                     {0, 0}, {1, 0}, {1, 0}, {0, 0});
+    qert::apply_single_qubit_unitary(sv.data(), sv.num_qubits(), 0, {0, 0}, {1, 0}, {1, 0}, {0, 0});
     REQUIRE(std::abs(sv.amplitude(1) - qert::Complex{1.0, 0.0}) < 1e-12);
 }

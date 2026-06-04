@@ -1,5 +1,6 @@
+#include "qert/common.hpp"
+
 #include <catch_amalgamated.hpp>
-#include "common.hpp"
 
 TEST_CASE("Common types have correct sizes", "[common]")
 {

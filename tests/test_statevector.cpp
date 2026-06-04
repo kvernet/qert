@@ -1,6 +1,7 @@
+#include "qert/common.hpp"
+#include "qert/statevector.hpp"
+
 #include <catch_amalgamated.hpp>
-#include "statevector.hpp"
-#include "common.hpp"
 
 TEST_CASE("Statevector construction", "[statevector]")
 {

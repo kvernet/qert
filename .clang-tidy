@@ -1,0 +1,24 @@
+Checks: >
+  clang-analyzer-*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  performance-*,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-use-using,
+  readability-container-size-empty,
+  readability-delete-null-pointer,
+  readability-redundant-member-init,
+  readability-string-compare
+
+WarningsAsErrors: >
+  clang-analyzer-*,
+  bugprone-*,
+  modernize-use-nullptr,
+  modernize-use-override
+
+HeaderFilterRegex: "^qert/core/include/.*\\.hpp$"
+
+CheckOptions:
+  - key: modernize-use-nullptr.NullMacros
+    value: "NULL"
