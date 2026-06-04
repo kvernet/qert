@@ -17,6 +17,7 @@ set(QERT_WARNING_FLAGS "")
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set(QERT_WARNING_FLAGS
+        -O2
         -Wall
         -Wextra
         -Wpedantic
