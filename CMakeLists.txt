@@ -82,6 +82,21 @@ if(ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     message(STATUS "Sanitizers enabled: address, undefined")
 endif()
 
+# --- Eigen ---
+include(FetchContent)
+FetchContent_Declare(
+    eigen
+    GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
+    GIT_TAG 3.4.1
+)
+FetchContent_MakeAvailable(eigen)
+
+# Mark Eigen includes as SYSTEM to suppress internal warnings.
+target_link_libraries(qert_core PUBLIC Eigen3::Eigen)
+target_include_directories(qert_core SYSTEM PUBLIC
+    ${eigen_SOURCE_DIR}
+)
+
 # --- Main Executable ---
 add_executable(qert
     app/main.cpp

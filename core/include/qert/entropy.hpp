@@ -15,6 +15,7 @@ namespace qert
 // The reduced density matrix is ρ_A = Tr_B(|ψ⟩⟨ψ|) = M * M^†
 // where M is the reshaped matrix.
 //
+// Eigenvalues of ρ_A are computed via Eigen::SelfAdjointEigenSolver.
 // Entropy S = -Tr(ρ_A ln ρ_A) = -Σ λ_i ln(λ_i)
 // where λ_i are the eigenvalues of ρ_A.
 //
@@ -25,12 +26,6 @@ namespace qert
 // Compute half-chain entanglement entropy.
 // Splits the system at qubit k = N/2 (floor).
 // Returns the von Neumann entropy in nats.
-//
-// For N qubits, the statevector size is 2^N.
-// The bipartition splits into subsystems of size k and N-k.
-//
-// Uses singular value decomposition (SVD) of the reshaped matrix.
-// The singular values squared are the eigenvalues of ρ_A.
 //
 // Preconditions:
 //   sv != nullptr
