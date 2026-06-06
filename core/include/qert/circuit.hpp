@@ -92,6 +92,14 @@ class Circuit
     // depth: total number of layers.
     static Circuit brickwall_1d(uint32_t num_qubits, uint32_t depth);
 
+    // Apply a qubit-to-memory mapping to all gates in the circuit.
+    // Transforms logical qubit indices in-place according to the strategy.
+    //   "lexicographic"  — identity (no change)
+    //   "gray"           — Gray code permutation
+    //   "locality_aware" — Z-order (Morton) curve
+    // Throws std::invalid_argument for unknown strategies.
+    void apply_qubit_mapping(const std::string &strategy);
+
   private:
     uint32_t num_qubits_;
     uint32_t depth_;

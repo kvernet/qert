@@ -235,6 +235,7 @@ int main(int argc, char **argv)
     }
 
     qert::Circuit circuit = qert::Circuit::brickwall_1d(args.num_qubits, args.depth);
+    circuit.apply_qubit_mapping(args.mapping);
 
     // --- Initialize statevector ---
     qert::Statevector sv(args.num_qubits);
