@@ -140,6 +140,19 @@ def extract_entropy_by_depth(data: np.ndarray) -> dict[int, float]:
     
     return entropy_by_depth
 
+def extract_cache_by_depth(data: np.ndarray) -> dict[int, list[float]]:
+    """
+    Extract per-gate L3 cache misses at each depth.
+    Returns dict: depth -> list of miss counts (one per gate in that layer).
+    """
+    cache_by_depth = {}
+    for row in data:
+        depth = int(row["depth"])
+        l3 = row["l3_misses_delta"]
+        if depth not in cache_by_depth:
+            cache_by_depth[depth] = []
+        cache_by_depth[depth].append(l3)
+    return cache_by_depth
 
 # ============================================================================
 # Saturation Analysis
@@ -316,6 +329,58 @@ def test_invariant_hypothesis(
     
     return results
 
+def test_cache_hypothesis(runs: list[dict]) -> list[dict]:
+    """
+    Test the cache-entanglement hypothesis.
+    
+    For each (N, mapping) condition, aggregate L3 cache misses across seeds,
+    fit saturation curves, and compare α_cache to α_entropy.
+    """
+    conditions = {}
+    for run in runs:
+        meta = run["metadata"]
+        n = meta["num_qubits"]
+        mapping = meta["qubit_mapping"]
+        key = (n, mapping)
+        if key not in conditions:
+            conditions[key] = []
+        conditions[key].append(run)
+    
+    results = []
+    
+    for (n, mapping), cond_runs in conditions.items():
+        # Aggregate mean L3 misses per gate at each depth.
+        depth_l3 = {}
+        for run in cond_runs:
+            cache_by_depth = extract_cache_by_depth(run["data"])
+            for depth, misses in cache_by_depth.items():
+                if depth not in depth_l3:
+                    depth_l3[depth] = []
+                depth_l3[depth].extend(misses)
+        
+        depths = np.array(sorted(depth_l3.keys()))
+        mean_l3 = np.array([np.mean(depth_l3[d]) for d in depths])
+        std_l3 = np.array([np.std(depth_l3[d]) for d in depths])
+        
+        # Fit saturation curve to L3 misses.
+        fit = fit_saturation_curve(depths, mean_l3)
+        d_page = n / 2.0
+        
+        results.append({
+            "num_qubits": n,
+            "mapping": mapping,
+            "num_seeds": len(cond_runs),
+            "d_page": d_page,
+            "d90_cache": fit["d90"],
+            "alpha_cache": fit["d90"] / d_page if d_page > 0 else np.nan,
+            "r_squared_cache": float(fit["r_squared"]),
+            "fit_quality_cache": fit["fit_quality"],
+            "mean_l3_curve": [float(v) for v in mean_l3],
+            "std_l3_curve": [float(v) for v in std_l3],
+            "depths": [int(d) for d in depths],
+        })
+    
+    return results
 
 # ============================================================================
 # Reporting
@@ -357,6 +422,38 @@ def print_summary(hypothesis_results: list[dict]):
         else:
             print(f"  N={n:2d}: insufficient mappings for comparison")
 
+def print_cache_summary(cache_results: list[dict]):
+    """Print cache hypothesis test results."""
+    print("\n" + "=" * 80)
+    print("CACHE HYPOTHESIS TEST SUMMARY")
+    print("=" * 80)
+    print(f"{'N':>4s}  {'Mapping':<16s}  {'Seeds':>5s}  "
+          f"{'D_Page':>8s}  {'D_90_cache':>10s}  {'α_cache':>10s}  "
+          f"{'R²':>6s}  {'Quality':<8s}")
+    print("-" * 80)
+    
+    for r in sorted(cache_results, key=lambda x: (x["num_qubits"], x["mapping"])):
+        print(
+            f"{r['num_qubits']:4d}  {r['mapping']:<16s}  {r['num_seeds']:5d}  "
+            f"{r['d_page']:8.1f}  {r['d90_cache']:10.1f}  {r['alpha_cache']:10.3f}  "
+            f"{r['r_squared_cache']:6.3f}  {r['fit_quality_cache']:<8s}"
+        )
+    
+    print("\n--- Cache Invariant Test ---")
+    by_n = {}
+    for r in cache_results:
+        n = r["num_qubits"]
+        if n not in by_n:
+            by_n[n] = []
+        by_n[n].append(r["alpha_cache"])
+    
+    for n, alphas in sorted(by_n.items()):
+        alphas = [a for a in alphas if not np.isnan(a)]
+        if len(alphas) >= 2:
+            spread = max(alphas) - min(alphas)
+            status = "PASS" if spread < 0.2 else "FAIL"
+            print(f"  N={n:2d}: α_cache ∈ [{min(alphas):.3f}, {max(alphas):.3f}], "
+                  f"spread={spread:.3f} ({status})")
 
 # ============================================================================
 # Plotting
@@ -613,6 +710,67 @@ def plot_execution_time(
     plt.close(fig)
 
 
+def plot_cache_curves(
+    cache_results: list[dict],
+    output_path: str | None = None,
+):
+    """L3 cache miss curves for all system sizes."""
+    if not HAS_PLT:
+        return
+
+    by_n = {}
+    for r in cache_results:
+        n = r["num_qubits"]
+        if n not in by_n:
+            by_n[n] = []
+        by_n[n].append(r)
+
+    n_list = sorted(by_n.keys())
+    num_n = len(n_list)
+    ncols = (num_n + 1) // 2
+    nrows = 2 if num_n > 1 else 1
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.5 * ncols, 4.0 * nrows), squeeze=False)
+    axes_flat = axes.flatten()
+    for idx in range(num_n, len(axes_flat)):
+        axes_flat[idx].set_visible(False)
+
+    colors = {"lexicographic": "#1f77b4", "gray": "#ff7f0e", "locality_aware": "#2ca02c"}
+
+    for idx, n in enumerate(n_list):
+        ax = axes_flat[idx]
+        for r in by_n[n]:
+            depths = r["depths"]
+            means = r["mean_l3_curve"]
+            stds = r["std_l3_curve"]
+            mapping = r["mapping"]
+            ax.errorbar(
+                depths, means, yerr=stds,
+                marker="o", markersize=3, capsize=2, linewidth=1.0,
+                color=colors.get(mapping, "#333333"),
+                label=fr"{mapping} ($\alpha$={r['alpha_cache']:.3f})",
+                alpha=0.85,
+            )
+
+        ax.axvline(x=n/2, color="red", linestyle="--", alpha=0.5, linewidth=0.8)
+        ax.set_xlabel("Circuit depth", fontsize=9)
+        ax.set_ylabel("L3 misses / gate", fontsize=9)
+        ax.set_title(f"N = {n}", fontsize=10, fontweight="bold")
+        ax.legend(fontsize=6, loc="upper right")
+        ax.grid(True, alpha=0.3)
+        ax.set_xlim(left=0)
+
+    fig.suptitle("L3 Cache Misses vs. Circuit Depth", fontsize=14, fontweight="bold", y=1.01)
+    plt.tight_layout(rect=[0, 0.04, 1, 0.96])
+
+    if output_path:
+        plt.savefig(output_path, dpi=200, bbox_inches="tight")
+        print(f"Cache curves saved to {output_path}")
+    else:
+        plt.show()
+    plt.close(fig)
+
+
 def plot_all(
     hypothesis_results: list[dict],
     runs: list[dict],
@@ -675,19 +833,35 @@ def main():
     print(f"System sizes: {sorted(unique_n)}")
     print(f"Mappings: {sorted(unique_mappings)}")
     
-    print("\nRunning hypothesis tests...")
-    results = test_invariant_hypothesis(runs)
-    print_summary(results)
+    # Entropy analysis.
+    print("\n=== Entropy Analysis ===")
+    entropy_results = test_invariant_hypothesis(runs)
+    print_summary(entropy_results)
+    
+    # Cache analysis.
+    print("\n=== Cache Analysis ===")
+    cache_results = test_cache_hypothesis(runs)
+    print_cache_summary(cache_results)
     
     if args.json:
         with open(args.json, "w") as f:
-            json.dump(results, f, indent=2, default=str)
+            json.dump({
+                "entropy": entropy_results,
+                "cache": cache_results,
+            }, f, indent=2, default=str)
         print(f"\nAnalysis results exported to {args.json}")
     
     if args.plot:
-        plot_all(results, runs)
+        plot_entropy_curves(entropy_results)
+        plot_cache_curves(cache_results)
+        plot_execution_time(runs)
     elif args.output:
-        plot_all(results, runs, args.output)
+        path = Path(args.output)
+        path.mkdir(parents=True, exist_ok=True)
+        plot_entropy_curves(entropy_results, str(path / "entropy.png"))
+        plot_cache_curves(cache_results, str(path / "cache.png"))
+        plot_alpha_summary(entropy_results, str(path / "alpha.png"))
+        plot_execution_time(runs, str(path / "timing.png"))
 
 
 if __name__ == "__main__":

@@ -29,18 +29,29 @@ dev-install:  ## Install development dependencies
 # Build
 # --------------------------------------------------------------------
 
-build:  ## Build with tests in Release mode
+build:  ## Build with tests in Release mode (PAPI + Eigen enabled)
+	cmake -B build -G Ninja \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+		-DBUILD_TESTING=ON \
+		-DENABLE_PAPI=ON \
+		-DPAPI_ROOT=$(PAPI_DIR)
+	cmake --build build --parallel $$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+
+build-no-papi:  ## Build without PAPI (Eigen only)
 	cmake -B build -G Ninja \
 		-DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 		-DBUILD_TESTING=ON
 	cmake --build build --parallel $$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
-build-debug:  ## Build with tests in Debug mode
+build-debug:  ## Build with tests in Debug mode (PAPI + sanitizers)
 	cmake -B build -G Ninja \
 		-DCMAKE_BUILD_TYPE=Debug \
 		-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 		-DBUILD_TESTING=ON \
+		-DENABLE_PAPI=ON \
+		-DPAPI_ROOT=$(PAPI_DIR) \
 		-DENABLE_SANITIZERS=ON
 	cmake --build build
 
@@ -104,6 +115,7 @@ clean:  ## Remove build directory
 
 distclean: clean  ## Remove build directory and coverage artifacts
 	rm -f coverage.info
+	rm -f coverage_filtered.info
 	rm -rf coverage-report/
 
 # --------------------------------------------------------------------

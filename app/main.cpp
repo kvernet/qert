@@ -283,8 +283,11 @@ int main(int argc, char **argv)
 
         // Hardware counters: read after gate, compute delta.
         auto end_hw = profiler.read();
-        ev.l3_misses_delta = end_hw.l3_misses - start_hw.l3_misses;
-        ev.tlb_misses_delta = end_hw.tlb_misses - start_hw.tlb_misses;
+        ev.l3_misses_delta =
+            (end_hw.l3_misses >= start_hw.l3_misses) ? (end_hw.l3_misses - start_hw.l3_misses) : 0;
+        ev.tlb_misses_delta = (end_hw.tlb_misses >= start_hw.tlb_misses)
+                                  ? (end_hw.tlb_misses - start_hw.tlb_misses)
+                                  : 0;
 
         // --- Entropy sampling ---
         // Compute half-chain entropy at even layers, after the last gate

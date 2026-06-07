@@ -1,17 +1,49 @@
-BASE_SEED=42
+#!/usr/bin/env bash
+# scripts/single.sh — Sequential single-process sweep.
+#
+# Usage:
+#   bash scripts/single.sh <N> <mapping> <num_seeds> [base_seed]
+#
+# Example:
+#   bash scripts/single.sh 20 lexicographic 10 42
+
+set -euo pipefail
+
+N=${1:?}
+MAPPING=${2:?}
+NUM_SEEDS=${3:?}
+BASE_SEED=${4:-42}
+DEPTH=$(( 3 * N ))
+QERT_BIN="${QERT_BIN:-./build/qert}"
 
 TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
-OUTPUT_DIR="results/${TIMESTAMP}"
+OUTPUT_DIR="results/single_${TIMESTAMP}"
 mkdir -p "$OUTPUT_DIR"
 
-for N in 4 6 8 10 12 14 16 18; do
-    DEPTH=$(( 3 * N ))
-    for MAPPING in lexicographic gray locality_aware; do
-        for i in $(seq 0 99); do
-			SEED=$((BASE_SEED + i * 1000))
-			OUTPUT="${OUTPUT_DIR}/run_n${N}_d${DEPTH}_s${SEED}_${MAPPING}.csv"
-			python scripts/run_experiment.py --num-qubits $N --seed $SEED --mapping $MAPPING --output-dir $OUTPUT_DIR
-		done
-        BASE_SEED=$((BASE_SEED + 100000))
-    done
+echo "=== Single-process sweep ==="
+echo "N=$N  depth=$DEPTH  mapping=$MAPPING  seeds=$NUM_SEEDS"
+echo "Output: $OUTPUT_DIR"
+echo ""
+
+for i in $(seq 0 $((NUM_SEEDS - 1))); do
+    SEED=$((BASE_SEED + i * 1000))
+    OUTPUT="${OUTPUT_DIR}/run_n${N}_d${DEPTH}_s${SEED}_${MAPPING}.csv"
+    
+    START=$(date +%s)
+    echo -n "[$((i+1))/$NUM_SEEDS] seed=$SEED ... "
+    
+    $QERT_BIN \
+        --num-qubits "$N" \
+        --depth "$DEPTH" \
+        --seed "$SEED" \
+        --mapping "$MAPPING" \
+        --output "$OUTPUT"
+    
+    END=$(date +%s)
+    echo "OK ($((END-START))s)"
 done
+
+SUCCEEDED=$(ls "$OUTPUT_DIR"/*.csv 2>/dev/null | wc -l)
+echo ""
+echo "Done: $SUCCEEDED/$NUM_SEEDS succeeded"
+echo "Results: $OUTPUT_DIR"
