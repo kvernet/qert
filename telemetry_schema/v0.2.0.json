@@ -1,0 +1,72 @@
+{
+    "schema_version": "0.2.0",
+    "experiment_metadata": {
+        "circuit_family": "brickwall_1d",
+        "circuit_depth_total": 60,
+        "num_qubits": 20,
+        "qubit_mapping": "lexicographic",
+        "rng_seed": 42,
+        "git_commit": "...",
+        "compiler": "GCC-13.3.0",
+        "compiler_flags": "-O3 -Wall -Wextra -Wpedantic",
+        "cpu_arch": "x86_64",
+        "cpu_model": "13th Gen Intel(R) Core(TM) i7-13700H"
+    },
+    "telemetry_columns": [
+        {
+            "name": "event_id",
+            "type": "uint64",
+            "unit": "count",
+            "description": "Monotonically increasing event counter, one per gate application"
+        },
+        {
+            "name": "depth",
+            "type": "uint32",
+            "unit": "circuit layer index",
+            "description": "Current circuit depth (layer number) of this gate"
+        },
+        {
+            "name": "gate_idx",
+            "type": "uint32",
+            "unit": "index within layer",
+            "description": "Zero-based index of this gate within the current layer"
+        },
+        {
+            "name": "execution_time_ns",
+            "type": "uint64",
+            "unit": "nanoseconds",
+            "description": "Wall-clock time to apply this gate, including telemetry overhead"
+        },
+        {
+            "name": "l3_misses_delta",
+            "type": "uint64",
+            "unit": "count",
+            "description": "L3 cache misses since previous event. Measured via PAPI when available; zero otherwise."
+        },
+        {
+            "name": "tlb_misses_delta",
+            "type": "uint64",
+            "unit": "count",
+            "description": "Data TLB misses since previous event. Measured via PAPI when available; zero otherwise."
+        },
+        {
+            "name": "working_set_kb",
+            "type": "uint64",
+            "unit": "KB",
+            "description": "Estimated working set size (currently total statevector size; future: page-level tracking)"
+        },
+        {
+            "name": "stride_entropy",
+            "type": "float64",
+            "unit": "bits",
+            "description": "Shannon entropy of memory stride distribution (currently stubbed to 0.0; future: address tracing)"
+        },
+        {
+            "name": "half_chain_entropy",
+            "type": "float64",
+            "unit": "nats",
+            "nullable": true,
+            "description": "Von Neumann entropy of half-chain reduced density matrix. Computed at even layers only; null for odd layers and all non-bipartition events."
+        }
+    ]
+}

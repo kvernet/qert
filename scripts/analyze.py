@@ -609,18 +609,6 @@ def plot_alpha_summary(hypothesis_results: list[dict], output_path: str | None =
     ax.legend(fontsize=10, loc="lower right")
     ax.grid(True, alpha=0.3)
     ax.set_xlim(n_list[0] - 0.5, n_list[-1] + 0.5)
-    ax.set_ylim(0.8, 2.2)
-
-    ax.text(
-        0.98, 0.95,
-        f"Saturation occurs at\n{mean_alpha:.2f}$\\times$ the Page time\n"
-        f"across N = {n_list[0]} - {n_list[-1]}",
-        transform=ax.transAxes,
-        fontsize=10,
-        ha="right",
-        va="top",
-        bbox=dict(boxstyle="round,pad=0.4", facecolor="lightyellow", alpha=0.9),
-    )
 
     plt.tight_layout()
 
@@ -674,6 +662,8 @@ def plot_execution_time(
 
     cmap = plt.cm.viridis
     n_list = sorted(set(n for (n, d) in summary))
+    if len(n_list) <= 1:
+        return
     colors = {n: cmap(i / (len(n_list) - 1)) for i, n in enumerate(n_list)}
 
     for n in n_list:
@@ -736,7 +726,7 @@ def plot_cache_curves(
         axes_flat[idx].set_visible(False)
 
     colors = {"lexicographic": "#1f77b4", "gray": "#ff7f0e", "locality_aware": "#2ca02c"}
-
+    ylims = {16:[-40, 50], 18:[-200, 350], 20:[-1500, 3000]}
     for idx, n in enumerate(n_list):
         ax = axes_flat[idx]
         for r in by_n[n]:
@@ -758,7 +748,8 @@ def plot_cache_curves(
         ax.set_title(f"N = {n}", fontsize=10, fontweight="bold")
         ax.legend(fontsize=6, loc="upper right")
         ax.grid(True, alpha=0.3)
-        ax.set_xlim(left=0)
+        ylim = ylims[n] if n in ylims else None
+        ax.set_ylim(ylim)
 
     fig.suptitle("L3 Cache Misses vs. Circuit Depth", fontsize=14, fontweight="bold", y=1.01)
     plt.tight_layout(rect=[0, 0.04, 1, 0.96])
@@ -769,24 +760,6 @@ def plot_cache_curves(
     else:
         plt.show()
     plt.close(fig)
-
-
-def plot_all(
-    hypothesis_results: list[dict],
-    runs: list[dict],
-    output_dir: str | None = None,
-):
-    """Generate all three figures."""
-    if output_dir:
-        path = Path(output_dir)
-        path.mkdir(parents=True, exist_ok=True)
-        plot_entropy_curves(hypothesis_results, str(path / "entropy.png"))
-        plot_alpha_summary(hypothesis_results, str(path / "alpha.png"))
-        plot_execution_time(runs, str(path / "timing.png"))
-    else:
-        plot_entropy_curves(hypothesis_results)
-        plot_alpha_summary(hypothesis_results)
-        plot_execution_time(runs)
 
 
 # ============================================================================

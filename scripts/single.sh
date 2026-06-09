@@ -43,7 +43,7 @@ for i in $(seq 0 $((NUM_SEEDS - 1))); do
     echo "OK ($((END-START))s)"
 done
 
-SUCCEEDED=$(ls "$OUTPUT_DIR"/*.csv 2>/dev/null | wc -l)
+SUCCEEDED=$(ls "$OUTPUT_DIR"/*.csv 2>/dev/null | wc -l) || true
 echo ""
 echo "Done: $SUCCEEDED/$NUM_SEEDS succeeded"
 echo "Results: $OUTPUT_DIR"
