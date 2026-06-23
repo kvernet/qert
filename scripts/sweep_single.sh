@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+run=${1:-1}
+
 compute_base() {
     N=$1
     MAPPING_OFFSET=$2
-    echo $((N * 1000000 + MAPPING_OFFSET * 100000 + 42))
+    echo $((N * 10000000 + run * 1000000 + MAPPING_OFFSET * 100000))
 }
 
 sweep_single() {
@@ -16,18 +18,10 @@ sweep_single() {
             gray)          base=$(compute_base $N 1) ;;
             locality_aware) base=$(compute_base $N 2) ;;
         esac
-        bash scripts/single.sh $N $mapping $NUM_SEEDS $base
+        bash single.sh $N $mapping $NUM_SEEDS $base
     done
 }
 
-# N=16: 100 seeds per mapping (~7 min)
-sweep_single 16 100
-
-# N=18: 100 seeds per mapping (~1.5 hours)
-sweep_single 18 100
-
-# N=20: 100 seeds per mapping (~12 hours)
-sweep_single 20 100
-
-# N=22: 100 seeds per mapping (~120 hours)
-#sweep_single 22 100
+for N in $(seq 8 2 18); do
+    sweep_single $N 500
+done

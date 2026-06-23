@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# scripts/single.sh — Sequential single-process sweep.
-#
 # Usage:
 #   bash scripts/single.sh <N> <mapping> <num_seeds> [base_seed]
 #
 # Example:
-#   bash scripts/single.sh 20 lexicographic 10 42
+#   bash scripts/single.sh 16 lexicographic 10 42
 
 set -euo pipefail
 
@@ -26,7 +24,7 @@ echo "Output: $OUTPUT_DIR"
 echo ""
 
 for i in $(seq 0 $((NUM_SEEDS - 1))); do
-    SEED=$((BASE_SEED + i * 1000))
+    SEED=$((BASE_SEED + i * 10))
     OUTPUT="${OUTPUT_DIR}/run_n${N}_d${DEPTH}_s${SEED}_${MAPPING}.csv"
     
     START=$(date +%s)

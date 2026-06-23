@@ -1,0 +1,43 @@
+{
+    "schema_version": "1.0.0",
+    "description": "MPS bond dimension benchmark output format.",
+    "experiment_metadata": {
+        "circuit_family": "brickwall_1d",
+        "circuit_depth_total": 48,
+        "num_qubits": 16,
+        "chi_max": 64,
+        "qubit_mapping": "lexicographic",
+        "rng_seed": 42,
+        "git_commit": "...",
+        "compiler": "GCC-13.3.0",
+        "compiler_flags": "-O3 -Wall -Wextra -Wpedantic",
+        "cpu_arch": "x86_64",
+        "cpu_model": "13th Gen Intel(R) Core(TM) i7-13700H"
+    },
+    "columns": [
+        {
+            "name": "depth",
+            "type": "uint32",
+            "unit": "circuit layer index",
+            "description": "Circuit depth at which this measurement was taken (even layers only)."
+        },
+        {
+            "name": "entropy_nats",
+            "type": "float64",
+            "unit": "nats",
+            "description": "Half-chain von Neumann entanglement entropy from the statevector simulator, computed at the same depth."
+        },
+        {
+            "name": "chi_max",
+            "type": "uint32",
+            "unit": "count",
+            "description": "Maximum bond dimension across all MPS bonds at this depth."
+        },
+        {
+            "name": "avg_chi",
+            "type": "float64",
+            "unit": "count",
+            "description": "Average bond dimension across all MPS bonds at this depth."
+        }
+    ]
+}

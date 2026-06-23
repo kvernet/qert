@@ -34,8 +34,7 @@ build:  ## Build with tests in Release mode (PAPI + Eigen enabled)
 		-DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 		-DBUILD_TESTING=ON \
-		-DENABLE_PAPI=ON \
-		-DPAPI_ROOT=$(PAPI_DIR)
+		-DENABLE_PAPI=ON
 	cmake --build build --parallel $$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
 build-no-papi:  ## Build without PAPI (Eigen only)
@@ -51,7 +50,6 @@ build-debug:  ## Build with tests in Debug mode (PAPI + sanitizers)
 		-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 		-DBUILD_TESTING=ON \
 		-DENABLE_PAPI=ON \
-		-DPAPI_ROOT=$(PAPI_DIR) \
 		-DENABLE_SANITIZERS=ON
 	cmake --build build
 

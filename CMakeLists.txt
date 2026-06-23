@@ -1,11 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
-project(qert VERSION 0.2.0 LANGUAGES CXX)
+project(qert VERSION 1.0.0 LANGUAGES CXX)
 
 # --- Options ---
 option(BUILD_TESTING "Build the test suite" OFF)
-option(BUILD_BENCHMARKS "Build benchmarks" OFF)
 option(ENABLE_PAPI "Enable hardware performance counters via PAPI" OFF)
-option(ENABLE_OPENMP "Enable OpenMP parallelism" OFF)
 option(ENABLE_SANITIZERS "Enable ASan and UBSan" OFF)
 
 # --- C++ Standard ---
@@ -58,6 +56,7 @@ add_library(qert_core STATIC
     core/src/telemetry.cpp
     core/src/entropy.cpp
     core/src/circuit.cpp
+    core/src/mps.cpp
 )
 
 target_include_directories(qert_core PUBLIC
@@ -104,7 +103,13 @@ add_executable(qert
 
 target_link_libraries(qert PRIVATE qert_core)
 
-# --- Optional: PAPI (for hardware performance counters) ---
+# --- MPS Executable ---
+add_executable(qert_mps
+    app/mps.cpp
+)
+target_link_libraries(qert_mps PRIVATE qert_core)
+
+# --- PAPI (for hardware performance counters) ---
 if(ENABLE_PAPI)
     if(DEFINED PAPI_ROOT)
         find_library(PAPI_LIBRARY papi
@@ -128,18 +133,6 @@ if(ENABLE_PAPI)
     else()
         message(FATAL_ERROR "PAPI requested but not found. "
                             "Install libpapi-dev or set -DPAPI_ROOT=/path/to/papi-install")
-    endif()
-endif()
-
-# --- Optional: OpenMP (for parallel gate application) ---
-if(ENABLE_OPENMP)
-    find_package(OpenMP)
-    if(OpenMP_CXX_FOUND)
-        target_link_libraries(qert_core PUBLIC OpenMP::OpenMP_CXX)
-        target_compile_definitions(qert_core PUBLIC QERT_HAS_OPENMP)
-        message(STATUS "OpenMP enabled")
-    else()
-        message(FATAL_ERROR "OpenMP requested but not found")
     endif()
 endif()
 
@@ -197,23 +190,8 @@ if(BUILD_TESTING)
     message(STATUS "Tests enabled")
 endif()
 
-# --- Benchmarks ---
-if(BUILD_BENCHMARKS)
-    add_executable(qert_benchmarks
-        benchmarks/bench_circuits.cpp
-    )
-    target_link_libraries(qert_benchmarks PRIVATE qert_core)
-    target_include_directories(qert_benchmarks PRIVATE
-        ${CMAKE_CURRENT_BINARY_DIR}/generated
-    )
-    target_compile_options(qert_benchmarks PRIVATE
-        ${QERT_WARNING_FLAGS}
-    )
-    message(STATUS "Benchmarks enabled")
-endif()
-
 # --- Install ---
-install(TARGETS qert_core qert
+install(TARGETS qert_core qert qert_mps
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
